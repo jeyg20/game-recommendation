@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "dotenv>=0.9.9",
+    "google-genai>=2.20.0",
     "howlongtobeatpy>=1.0.22",
     "requests>=2.34.2",
 ]
