@@ -1,5 +1,6 @@
 import json
 import os
+from pathlib import Path
 from typing import Any
 
 import requests
@@ -13,6 +14,7 @@ PLAYER_SUMMARY = "https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v00
 PLAYER_OWNED_GAMES = "https://api.steampowered.com/IPlayerService/GetOwnedGames/v0001"
 PLAYER_GAME_STATS = "https://api.steampowered.com/ISteamUserStats/GetUserStatsForGame/v0002"
 PLAYER_RECENT_GAMES = "https://api.steampowered.com/IPlayerService/GetRecentlyPlayedGames/v0001"
+GAME_DETAILS = "https://store.steampowered.com/api/appdetails"
 
 type Params = dict[str, str | int]
 type SteamResponse = dict[str, Any] | None
@@ -29,27 +31,39 @@ def steam_request(url: str, params: Params) -> dict[str, Any] | None:
         print(e)
 
 
+def get_game_details(game_id: int) -> SteamResponse:
+    print("Getting game details")
+    params: Params = {"appids": game_id}
+    return steam_request(GAME_DETAILS, params)
+
+
 def get_player_sumamry(steam_id: int, steam_api_key: str) -> SteamResponse:
+    print("Getting player summary")
     params: Params = {"key": steam_api_key, "steamids": steam_id, "format": json}
     return steam_request(PLAYER_SUMMARY, params)
 
 
 def get_owned_games(steam_id: int, steam_api_key: str) -> SteamResponse:
+    print("Getting player owned games")
     params: Params = {"key": steam_api_key, "steamid": steam_id, "format": json, "include_appinfo": 1}
     return steam_request(PLAYER_OWNED_GAMES, params)
 
 
 def get_recent_games(steam_id: int, steam_api_key: str) -> SteamResponse:
+    print("Getting player recent games")
     params: Params = {"key": steam_api_key, "steamid": steam_id, "format": json}
     return steam_request(PLAYER_RECENT_GAMES, params)
 
 
 def get_player_stats(steam_id: int, steam_api_key: str, game_id: int) -> SteamResponse:
+    print("Getting player stats")
     params: Params = {"appid": game_id, "key": steam_api_key, "steamid": steam_id, "format": json}
     return steam_request(PLAYER_GAME_STATS, params)
 
 
-def write_file(file_name: str, data) -> None:
+def write_file(file_name: Path, data) -> None:
+    print("Writing json file")
+    file_name.parent.mkdir(parents=True, exist_ok=True)
     with open(file_name, "w") as file:
         file.write(json.dumps(data, indent=2))
 
@@ -59,7 +73,7 @@ def write_file(file_name: str, data) -> None:
 
 
 if __name__ == "__main__":
-    owned_games = get_owned_games(steam_id)
+    owned_games = get_owned_games(steam_id, steam_api_key)
     player_games = owned_games["response"]
     write_file("player_owned_games.json", player_games)
 

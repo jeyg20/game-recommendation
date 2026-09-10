@@ -10,8 +10,9 @@ from src import ai_agent, hltb, steam_api
 load_dotenv()
 STEAM_API_KEY = os.getenv("STEAM_API_KEY") or ""
 STEAM_ID = os.getenv("STEAM_ID") or 0
-STEAM_DATA_FILE_PATH = Path("steam_api_data.json")
-HLTB_DATA_FILE_PATH = Path("hltb_game_data_list.json")
+STEAM_DATA_FILE_PATH = Path("data/raw/steam_api_data.json")
+HLTB_DATA_FILE_PATH = Path("data/raw/hltb_game_data_list.json")
+STEAMSTORE_DATA = Path("data/raw/steamstore_data.json")
 OMITTED_NAME_FRAGMENTS = ["test", "alpha", "beta", "wallpaper engine"]
 
 
@@ -37,7 +38,8 @@ async def main():
             "playtime_hours": game["playtime_forever"] / 60,
             "main_story_hours": None,
             "review_score": None,
-            "type": None,
+            "genres": None,
+            "categories": None,
         }
 
     if not HLTB_DATA_FILE_PATH.is_file():
@@ -50,6 +52,20 @@ async def main():
         steam_api.write_file(HLTB_DATA_FILE_PATH, games)
     else:
         with open(HLTB_DATA_FILE_PATH) as file:
+            games = json.load(file)
+
+    if not STEAMSTORE_DATA.is_file():
+        for entry in games.values():
+            steamstore_data = steam_api.get_game_details(entry["appid"])
+            game_details = steamstore_data[str(entry["appid"])]
+            print(entry["name"], ": ", game_details)
+            if game_details["success"]:
+                entry["genres"] = game_details["data"].get("genres", [])
+                entry["categories"] = game_details["data"].get("categories", [])
+
+        steam_api.write_file(STEAMSTORE_DATA, games)
+    else:
+        with open(STEAMSTORE_DATA) as file:
             games = json.load(file)
 
 
