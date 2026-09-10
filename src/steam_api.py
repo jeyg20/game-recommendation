@@ -1,5 +1,6 @@
 import json
 import os
+from typing import Any
 
 import requests
 from dotenv import load_dotenv
@@ -13,8 +14,11 @@ PLAYER_OWNED_GAMES = "https://api.steampowered.com/IPlayerService/GetOwnedGames/
 PLAYER_GAME_STATS = "https://api.steampowered.com/ISteamUserStats/GetUserStatsForGame/v0002"
 PLAYER_RECENT_GAMES = "https://api.steampowered.com/IPlayerService/GetRecentlyPlayedGames/v0001"
 
+type Params = dict[str, str | int]
+type SteamResponse = dict[str, Any] | None
 
-def steam_request(url, params):
+
+def steam_request(url: str, params: Params) -> dict[str, Any] | None:
     try:
         res = requests.get(url, params)
         if res.status_code == 200:
@@ -25,36 +29,27 @@ def steam_request(url, params):
         print(e)
 
 
-def get_player_sumamry(steam_id: int, steam_api_key: str):
-    params = {"key": steam_api_key, "steamids": steam_id, "format": json}
+def get_player_sumamry(steam_id: int, steam_api_key: str) -> SteamResponse:
+    params: Params = {"key": steam_api_key, "steamids": steam_id, "format": json}
     return steam_request(PLAYER_SUMMARY, params)
 
 
-def get_owned_games(steam_id: int, steam_api_key: str):
-    params = {"key": steam_api_key, "steamid": steam_id, "format": json, "include_appinfo": 1}
+def get_owned_games(steam_id: int, steam_api_key: str) -> SteamResponse:
+    params: Params = {"key": steam_api_key, "steamid": steam_id, "format": json, "include_appinfo": 1}
     return steam_request(PLAYER_OWNED_GAMES, params)
 
 
-def get_recent_games(steam_id: int, steam_api_key: str):
-    params = {
-        "key": steam_api_key,
-        "steamid": steam_id,
-        "format": json,
-    }
+def get_recent_games(steam_id: int, steam_api_key: str) -> SteamResponse:
+    params: Params = {"key": steam_api_key, "steamid": steam_id, "format": json}
     return steam_request(PLAYER_RECENT_GAMES, params)
 
 
-def get_player_stats(steam_id: int, steam_api_key: str, game_id: int):
-    params = {
-        "appid": game_id,
-        "key": steam_api_key,
-        "steamid": steam_id,
-        "format": json,
-    }
+def get_player_stats(steam_id: int, steam_api_key: str, game_id: int) -> SteamResponse:
+    params: Params = {"appid": game_id, "key": steam_api_key, "steamid": steam_id, "format": json}
     return steam_request(PLAYER_GAME_STATS, params)
 
 
-def write_file(file_name, data):
+def write_file(file_name: str, data) -> None:
     with open(file_name, "w") as file:
         file.write(json.dumps(data, indent=2))
 
@@ -72,7 +67,7 @@ if __name__ == "__main__":
     game_names_list = [
         game["name"]
         for game in player_games["games"]
-        if not any(omit in game.get("name", "").lower() for omit in game_ommit_list)
+        if not any(omit in game.get("name", "").lower() and game.get("playtime_forever") for omit in game_ommit_list)
     ]
 
     # games_achivements_dict = {}

@@ -3,10 +3,11 @@ name = "gamer-guide"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.14"
 dependencies = [
     "dotenv>=0.9.9",
     "google-genai>=2.20.0",
     "howlongtobeatpy>=1.0.22",
+    "pydantic>=2.13.4",
     "requests>=2.34.2",
 ]
