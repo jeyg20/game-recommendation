@@ -55,13 +55,27 @@ async def main():
             games = json.load(file)
 
     if not STEAMSTORE_DATA.is_file():
-        for entry in games.values():
+        for appid in list(games.keys()):
+            entry = games[appid]
             steamstore_data = steam_api.get_game_details(entry["appid"])
             game_details = steamstore_data[str(entry["appid"])]
-            print(entry["name"], ": ", game_details)
-            if game_details["success"]:
-                entry["genres"] = game_details["data"].get("genres", [])
-                entry["categories"] = game_details["data"].get("categories", [])
+
+            data = game_details.get("data") if game_details.get("success") else None
+            is_real = data and (
+                data.get("detailed_description") or data.get("about_the_game") or data.get("short_description")
+            )
+            is_utility = (
+                data
+                and data.get("genres")
+                and any("utilities" in item["description"].lower() for item in data.get("genres"))
+            )
+
+            if not is_real or is_utility:
+                games.pop(appid)
+                continue
+
+            entry["genres"] = data.get("genres", [])
+            entry["categories"] = data.get("categories", [])
 
         steam_api.write_file(STEAMSTORE_DATA, games)
     else:

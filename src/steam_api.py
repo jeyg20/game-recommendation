@@ -32,7 +32,7 @@ def steam_request(url: str, params: Params) -> dict[str, Any] | None:
 
 
 def get_game_details(game_id: int) -> SteamResponse:
-    print("Getting game details")
+    print(f"Getting game {game_id} details")
     params: Params = {"appids": game_id}
     return steam_request(GAME_DETAILS, params)
 
