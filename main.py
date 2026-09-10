@@ -1,56 +1,56 @@
 import asyncio
+import json
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 
 from src import ai_agent, hltb, steam_api
-from pathlib import Path
 
 load_dotenv()
 STEAM_API_KEY = os.getenv("STEAM_API_KEY") or ""
 STEAM_ID = os.getenv("STEAM_ID") or 0
-steam_data_file_path = Path("steam_api_data.json")
-hltb_date_file_path = Path("htlb_game_data_list.json")
+STEAM_DATA_FILE_PATH = Path("steam_api_data.json")
+HLTB_DATA_FILE_PATH = Path("hltb_game_data_list.json")
+OMITTED_NAME_FRAGMENTS = ["test", "alpha", "beta", "wallpaper engine"]
 
 
 async def main():
     player_games = []
-    if not steam_data_file_path.is_file():
+    if not STEAM_DATA_FILE_PATH.is_file():
         print("retriving steam user games")
         owned_games = steam_api.get_owned_games(STEAM_ID, STEAM_API_KEY)
         print("games retrieved")
-        player_games = owned_games["response"]
-        steam_api.write_file("steam_api_data.json", player_games["games"])
+        player_games = owned_games["response"]["games"]
+        steam_api.write_file(STEAM_DATA_FILE_PATH, player_games)
     else:
-        player_games = steam_data_file_path
-
-
-    game_ommit_list = ["test", "alpha", "beta", "wallpaper engine"]
-    game_names_list = [
-        game["name"]
-        for game in player_games["games"]
-        if not any(omit in game.get("name", "").lower() for omit in game_ommit_list)
-    ]
+        with open(STEAM_DATA_FILE_PATH) as file:
+            player_games = json.load(file)
 
     games: dict[int, dict] = {}
 
-    if not hltb_date_file_path.is_file():
+    for game in player_games:
+        appid = game["appid"]
+        games[appid] = {
+            "appid": appid,
+            "name": game["name"],
+            "playtime_hours": game["playtime_forever"] / 60,
+            "main_story_hours": None,
+            "review_score": None,
+            "type": None,
+        }
 
-        hltb_game_data_list = {}
-
+    if not HLTB_DATA_FILE_PATH.is_file():
         print("Retriving How long to beat data of the player Owned games")
-        for name in game_names_list:
-            game_info = await hltb.get_game_hltb(name)
+        for entry in games.values():
+            hltb_result = await hltb.get_game_hltb(entry["name"])
+            entry["main_story_hours"] = getattr(hltb_result, "main_story", None)
+            entry["review_score"] = getattr(hltb_result, "review_score", None)
 
-            game_name = getattr(game_info, "game_name", name)
-            game_main_time = getattr(game_info, "main_story", "No data")
-            game_score = getattr(game_info, "review_score", "No data")
-            hltb_game_data_list[game_name] = {"Compleation_time": game_main_time, "review_score": game_score}
-
-        steam_api.write_file("hltb_game_data_list.json", hltb_game_data_list)
-
-
-    for games in player_games:
+        steam_api.write_file(HLTB_DATA_FILE_PATH, games)
+    else:
+        with open(HLTB_DATA_FILE_PATH) as file:
+            games = json.load(file)
 
 
 if __name__ == "__main__":
