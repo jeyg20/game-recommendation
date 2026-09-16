@@ -9,7 +9,7 @@ from src import ai_agent, hltb, steam_api
 
 load_dotenv()
 STEAM_API_KEY = os.getenv("STEAM_API_KEY") or ""
-STEAM_ID = os.getenv("STEAM_ID") or 0
+STEAM_ID = os.getenv("STEAM_ID") or ""
 STEAM_DATA_FILE_PATH = Path("data/raw/steam_api_data.json")
 HLTB_DATA_FILE_PATH = Path("data/raw/hltb_game_data_list.json")
 STEAMSTORE_DATA = Path("data/raw/steamstore_data.json")

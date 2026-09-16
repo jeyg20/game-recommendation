@@ -16,7 +16,7 @@ PLAYER_GAME_STATS = "https://api.steampowered.com/ISteamUserStats/GetUserStatsFo
 PLAYER_RECENT_GAMES = "https://api.steampowered.com/IPlayerService/GetRecentlyPlayedGames/v0001"
 GAME_DETAILS = "https://store.steampowered.com/api/appdetails"
 
-type Params = dict[str, str | int]
+type Params = dict[str, str | str]
 type SteamResponse = dict[str, Any] | None
 
 
@@ -31,31 +31,31 @@ def steam_request(url: str, params: Params) -> dict[str, Any] | None:
         print(e)
 
 
-def get_game_details(game_id: int) -> SteamResponse:
+def get_game_details(game_id: str) -> SteamResponse:
     print(f"Getting game {game_id} details")
     params: Params = {"appids": game_id}
     return steam_request(GAME_DETAILS, params)
 
 
-def get_player_sumamry(steam_id: int, steam_api_key: str) -> SteamResponse:
+def get_player_sumamry(steam_id: str, steam_api_key: str) -> SteamResponse:
     print("Getting player summary")
     params: Params = {"key": steam_api_key, "steamids": steam_id, "format": json}
     return steam_request(PLAYER_SUMMARY, params)
 
 
-def get_owned_games(steam_id: int, steam_api_key: str) -> SteamResponse:
+def get_owned_games(steam_id: str, steam_api_key: str) -> SteamResponse:
     print("Getting player owned games")
     params: Params = {"key": steam_api_key, "steamid": steam_id, "format": json, "include_appinfo": 1}
     return steam_request(PLAYER_OWNED_GAMES, params)
 
 
-def get_recent_games(steam_id: int, steam_api_key: str) -> SteamResponse:
+def get_recent_games(steam_id: str, steam_api_key: str) -> SteamResponse:
     print("Getting player recent games")
     params: Params = {"key": steam_api_key, "steamid": steam_id, "format": json}
     return steam_request(PLAYER_RECENT_GAMES, params)
 
 
-def get_player_stats(steam_id: int, steam_api_key: str, game_id: int) -> SteamResponse:
+def get_player_stats(steam_id: str, steam_api_key: str, game_id: str) -> SteamResponse:
     print("Getting player stats")
     params: Params = {"appid": game_id, "key": steam_api_key, "steamid": steam_id, "format": json}
     return steam_request(PLAYER_GAME_STATS, params)

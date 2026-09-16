@@ -1,11 +1,7 @@
 #Game Recomendation
 
-This application allow you to get game recomendations by using your steam data and the llm model of your choise, it
+This application allow you to get game recomendations by using your steam data and Google's Gemini, it
 can cross-reference a thousands of games agains a taste profile build by AI
-
-## TODO
-
-Checkboxes track progress — check one off only once it's actually working against real data, not just written.
 
 ### Foundation (done)
 
