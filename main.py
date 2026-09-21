@@ -5,14 +5,14 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from src import ai_agent, hltb, steam_api
+from src import ai_agent, hltb, steam_api, steamspy
 
 load_dotenv()
 STEAM_API_KEY = os.getenv("STEAM_API_KEY") or ""
 STEAM_ID = os.getenv("STEAM_ID") or ""
 STEAM_DATA_FILE_PATH = Path("data/raw/steam_api_data.json")
 HLTB_DATA_FILE_PATH = Path("data/raw/hltb_game_data_list.json")
-STEAMSTORE_DATA = Path("data/raw/steamstore_data.json")
+STEAMSPY_DATA = Path("data/raw/steamspy_data.json")
 OMITTED_NAME_FRAGMENTS = ["test", "alpha", "beta", "wallpaper engine"]
 
 
@@ -39,8 +39,31 @@ async def main():
             "main_story_hours": None,
             "review_score": None,
             "genres": None,
+            "tags": None,
             "categories": None,
         }
+
+    if not STEAMSPY_DATA.is_file():
+        for appid in list(games.keys()):
+            entry = games[appid]
+            steamspy_data = steamspy.get_game_details(entry["appid"])
+
+            if not steamspy_data or not steamspy_data["genre"]:
+                games.pop(appid)
+                continue
+
+            genres = steamspy_data["genre"].split(", ")
+            if any("utilities" in g.lower() for g in genres):
+                games.pop(appid)
+                continue
+
+            entry["genres"] = genres
+            entry["tags"] = steamspy_data["tags"]
+
+        steam_api.write_file(STEAMSPY_DATA, games)
+    else:
+        with open(STEAMSPY_DATA) as file:
+            games = json.load(file)
 
     if not HLTB_DATA_FILE_PATH.is_file():
         print("Retriving How long to beat data of the player Owned games")
@@ -52,34 +75,6 @@ async def main():
         steam_api.write_file(HLTB_DATA_FILE_PATH, games)
     else:
         with open(HLTB_DATA_FILE_PATH) as file:
-            games = json.load(file)
-
-    if not STEAMSTORE_DATA.is_file():
-        for appid in list(games.keys()):
-            entry = games[appid]
-            steamstore_data = steam_api.get_game_details(entry["appid"])
-            game_details = steamstore_data[str(entry["appid"])]
-
-            data = game_details.get("data") if game_details.get("success") else None
-            is_real = data and (
-                data.get("detailed_description") or data.get("about_the_game") or data.get("short_description")
-            )
-            is_utility = (
-                data
-                and data.get("genres")
-                and any("utilities" in item["description"].lower() for item in data.get("genres"))
-            )
-
-            if not is_real or is_utility:
-                games.pop(appid)
-                continue
-
-            entry["genres"] = data.get("genres", [])
-            entry["categories"] = data.get("categories", [])
-
-        steam_api.write_file(STEAMSTORE_DATA, games)
-    else:
-        with open(STEAMSTORE_DATA) as file:
             games = json.load(file)
 
 
