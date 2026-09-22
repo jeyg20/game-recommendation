@@ -29,6 +29,8 @@ async def main():
             player_games = json.load(file)
 
     games: dict[int, dict] = {}
+    games_without_tags: list[int] = []
+    steamspy_tags_record = set()
 
     for game in player_games:
         appid = game["appid"]
@@ -40,7 +42,6 @@ async def main():
             "review_score": None,
             "genres": None,
             "tags": None,
-            "categories": None,
         }
 
     if not STEAMSPY_DATA.is_file():
@@ -58,7 +59,11 @@ async def main():
                 continue
 
             entry["genres"] = genres
-            entry["tags"] = steamspy_data["tags"]
+            if type(steamspy_data) is list:
+                games_without_tags.append(appid)
+            else:
+                entry["tags"] = steamspy_data["tags"]
+                steamspy_tags_record.update(set(steamspy_data["tags"]))
 
         steam_api.write_file(STEAMSPY_DATA, games)
     else:

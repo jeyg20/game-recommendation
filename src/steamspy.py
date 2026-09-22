@@ -8,7 +8,7 @@ STEAM_SPY_URL = "https://steamspy.com/api.php?request"
 
 
 class GameSummary(TypedDict):
-    """One game as returned inside the tag/genre listings."""
+    """One game as returned by SteamSpy."""
 
     appid: int
     name: str
@@ -27,16 +27,9 @@ class GameSummary(TypedDict):
     initialprice: str
     discount: str
     ccu: int
-    genre: str
-    tag: dict[str, int]
-
-
-class GameDetails(GameSummary):
-    """Same as GameSummary plus the extra fields that appdetails adds."""
-
     languages: str
     genre: str
-    tags: dict[str, int]
+    tags: dict[str, int] | list
 
 
 def steamspy_request(query_params: Mapping[str, str | int]) -> Any | None:
@@ -49,7 +42,7 @@ def steamspy_request(query_params: Mapping[str, str | int]) -> Any | None:
         return None
 
 
-def get_game_details(appid: int) -> GameDetails | None:
+def get_game_details(appid: int) -> GameSummary | None:
     query_params = {"request": "appdetails", "appid": appid}
     return steamspy_request(query_params)
 
@@ -65,9 +58,11 @@ def get_game_by_genre(gameGenre: str) -> dict[str, GameSummary] | None:
 
 
 if __name__ == "__main__":
-    arkse_data = get_game_details(1030300)
-    print(json.dumps(arkse_data, indent=2))
-    expected = set(GameDetails.__annotations__)
+    game_data = get_game_details(346110)
+    print(json.dumps(game_data, indent=2))
+    print(len(game_data["tags"]) == 0)
+    print(type(game_data["tags"]))
+    expected = set(GameSummary.__annotations__)
     # for appid in (346110, 730, 570, 1245620, 2000000):
     #     data = get_game_details(appid)
     #     if data:
