@@ -1,5 +1,18 @@
 """Build a taste profile from the owned library, weighted against a Steam-wide tag corpus."""
 
+import json
+import time
+from pathlib import Path
+from pprint import pprint
+
+from steamspy import (
+    GameSummary,
+    get_game_details,
+    get_games_by_page,
+    get_top_100_games_forever,
+    get_top_100_games_two_weeks,
+)
+
 # ---------------------------------------------------------------------
 # 1. Background corpus (one-time, cached)
 # ---------------------------------------------------------------------
@@ -7,9 +20,61 @@
 # TODO: dedupe — the top100s are mostly already inside `all` page 0
 # TODO: random-sample ~1000 appids from that pool (appdetails is 1 req/sec, don't fetch all 3000)
 # TODO: appdetails each -> cache raw {appid: tags} to disk; this is the expensive step, never refetch
+#       per-id cache as JSON Lines (data/appdetails.jsonl), one json.dumps(game) + "\n" per line
+#       - write each game right after fetching it, file opened in append mode ("a")
+#       - on startup, read line by line -> set of done appids -> skip those in the loop
+#       - wrap json.loads in try/except JSONDecodeError: a crash can leave the last line half-written
+#       - normalize appids to int when loading (JSON keys/values may come back as str)
+#       - record failures too (None / no tags) so broken ids aren't refetched every run
 # TODO: drop untagged games and Utilities genre — same filters as candidates get
 # TODO: sanity check: most common corpus tags should be Indie/Action/Singleplayer/Casual.
 #       If Open World Survival Craft is near the top, the sample is contaminated.
+
+
+STEAM_BACKGROUND_CORPUS = Path("data/corpus/steam_bacground_corpus.json")
+
+
+def build_steam_collection():
+
+    steam_games_collection: dict[str, GameSummary] = {}
+
+    for i in range(0, 7, 2):
+        current_page = get_games_by_page(i)
+
+        if current_page is not None:
+            print(f"Adding games of page {i} to corpus...")
+            steam_games_collection |= current_page
+
+        time.sleep(60)
+
+    top_100_forever = get_top_100_games_forever()
+    top_100_last_two_weeks = get_top_100_games_two_weeks()
+
+    if top_100_forever is not None:
+        print("Addin top 100 games forever to corpus...")
+        steam_games_collection |= top_100_forever
+
+    if top_100_last_two_weeks is not None:
+        print("Adding top 100 games last two weeks to corpus...")
+        steam_games_collection |= top_100_last_two_weeks
+
+    # game_id = list(steam_games_collection.keys())[0:5]
+    #
+    # print(len(steam_games_collection))
+    # pprint(steam_games_collection[game_id[3]])
+
+    print("Writing json file")
+    STEAM_BACKGROUND_CORPUS.parent.mkdir(parents=True, exist_ok=True)
+
+    for game in steam_games_collection.values():
+        game_details = get_game_details(game["appid"])
+
+        if game_details is not None:
+            with open(STEAM_BACKGROUND_CORPUS, "a") as file:
+                file.write(
+                    json.dumps({game["appid"]: {"tags": game_details["tags"], "genre": game_details["genre"]}}) + "\n"
+                )
+
 
 # ---------------------------------------------------------------------
 # 2. df table
@@ -48,3 +113,23 @@
 # ---------------------------------------------------------------------
 # TODO: normalize appid int/str at the cache boundary before any of this —
 #       subtracting owned appids from candidates fails silently otherwise
+
+
+def test_func():
+    games_dict = get_games_by_page(0)
+
+    if games_dict is None:
+        print("Pages requested doesn't exist")
+    else:
+        print(type(games_dict).__name__, len(games_dict))
+
+        games_list = list(games_dict.keys())[:5]
+
+        print(games_list)
+        print(type(games_list[0]).__name__)
+
+        pprint(games_dict[games_list[0]])
+
+
+if __name__ == "__main__":
+    build_steam_collection()
