@@ -1,6 +1,7 @@
 """Build a taste profile from the owned library, weighted against a Steam-wide tag corpus."""
 
 import json
+import math
 import time
 from datetime import date
 from pathlib import Path
@@ -15,12 +16,6 @@ from steamspy import (
     get_top_100_games_two_weeks,
 )
 
-# ---------------------------------------------------------------------
-# 1. Background corpus (one-time, cached)
-# ---------------------------------------------------------------------
-# TODO: sanity check: most common corpus tags should be Indie/Action/Singleplayer/Casual.
-#       If Open World Survival Craft is near the top, the sample is contaminated.
-
 
 class CorpusRecord(TypedDict):
     appid: int
@@ -33,21 +28,19 @@ class CorpusRecord(TypedDict):
 STEAM_BACKGROUND_CORPUS = Path("data/corpus/steam_background_corpus.json")
 RETRY_FAILED_AFTER_DAYS = 7
 EXCLUDED_GENRES = {"utilities", "design & illustration", "video production", "animation & modeling"}
-EXCLUDED_EMPTY_GENRE_TAGS = {"software", "utilities", "benchmark", "game development", "documentary"}
+EXCLUDED_TAGS = {"software", "utilities", "benchmark", "game development", "documentary", "movie", "feature film"}
 EMPTY_GENRE_TOP_TAGS = 2
 
 
 def is_excluded(genre: str, tags: dict[str, int]) -> bool:
-    """Non-games (software genres, untagged, or genre-less tools/docs) stay out of the corpus."""
+    """Non-games (software genres, untagged, or tools/docs) stay out of the corpus."""
     if not tags:
         return True
 
     genres = {g.strip().lower() for g in genre.split(",") if g.strip()}
-    if genres:
-        return bool(genres & EXCLUDED_GENRES)
 
     top_tags = sorted(tags, key=tags.__getitem__, reverse=True)[:EMPTY_GENRE_TOP_TAGS]
-    return any(tag.lower() in EXCLUDED_EMPTY_GENRE_TAGS for tag in top_tags)
+    return any(tag.lower() in EXCLUDED_TAGS for tag in top_tags) or bool(genres & EXCLUDED_GENRES)
 
 
 def load_cache_status(path: Path) -> dict[int, CorpusRecord]:
@@ -79,6 +72,52 @@ def needs_fetch(appid: int, corpus: dict[int, CorpusRecord]) -> bool:
     return age.days >= RETRY_FAILED_AFTER_DAYS
 
 
+# ---------------------------------------------------------------------
+# 2. df table
+# ---------------------------------------------------------------------
+# TODO: refactor build_df_table:
+#       - filter `ok` records once into a list; N = its length, df counts over the same list
+#       - count df with collections.Counter (.update(record["tags"]) per ok record), loop corpus.values()
+#       - use the Counter as "df" directly, build "idf" with a dict comprehension
+#       - add a DfTable TypedDict (n: int, df: dict[str, int], idf: dict[str, float]) as return type
+#       - keep build pure; separate save/load to data/corpus/df_table.json
+#       - steps 4/5 load the saved table so profile and candidates share the same one
+
+
+def build_df_table(corpus: dict[int, CorpusRecord]):
+    """Create df table
+
+    df = how many corpus games carry each tag
+    N counts tagged games only
+    idf = log((1 + N) / (1 + df)) + 1   (smoothed, never zero)
+    """
+    tag_frequency = {}
+    n = 0
+    for key in corpus:
+        if corpus[key]["status"] == "ok":
+            n += 1
+            tags = corpus[key]["tags"]
+            for tag in tags:
+                if tag not in tag_frequency:
+                    tag_frequency[tag] = 1
+                else:
+                    tag_frequency[tag] += 1
+
+    df_table = {"n": n, "df": {}, "idf": {}}
+
+    for tag, df_value in tag_frequency.items():
+        df_table["df"][tag] = df_value
+        df_table["idf"][tag] = math.log((1 + n) / (1 + df_value)) + 1
+
+    return df_table
+
+
+def reclassify_cache(corpus: dict[int, CorpusRecord]):
+    for item in corpus:
+        if is_excluded(corpus[item]["genre"], corpus[item]["tags"]):
+            pass
+
+
 def build_steam_collection():
     steam_games_collection: dict[str, GameSummary] = {}
     corpus: dict[int, CorpusRecord] = {}
@@ -90,34 +129,37 @@ def build_steam_collection():
     else:
         print(f"No cache at {STEAM_BACKGROUND_CORPUS}, starting fresh")
 
-    print("Fetching `all` pages 0, 2, 4, 6 (1 req/60s, ~3 min)...")
-    for i in range(0, 7, 2):
-        current_page = get_games_by_page(i)
+    fetch_input = input("Do you want to fetch the pages from steamspy: (yes/no)").lower().strip()
 
-        if current_page is not None:
-            print(f"Adding {len(current_page)} games of page {i} to corpus...")
-            steam_games_collection |= current_page
+    if fetch_input == "yes":
+        print("Fetching `all` pages 0, 2, 4, 6 (1 req/60s, ~3 min)...")
+        for i in range(0, 7, 2):
+            current_page = get_games_by_page(i)
+
+            if current_page is not None:
+                print(f"Adding {len(current_page)} games of page {i} to corpus...")
+                steam_games_collection |= current_page
+            else:
+                print(f"Page {i} failed, skipping")
+
+            if i != 6:
+                print("Waiting 60s for the `all` rate limit...")
+                time.sleep(60)
+
+        top_100_forever = get_top_100_games_forever()
+        top_100_last_two_weeks = get_top_100_games_two_weeks()
+
+        if top_100_forever is not None:
+            print("Adding top 100 games forever to corpus...")
+            steam_games_collection |= top_100_forever
         else:
-            print(f"Page {i} failed, skipping")
+            print("Top 100 forever failed, skipping")
 
-        if i != 6:
-            print("Waiting 60s for the `all` rate limit...")
-            time.sleep(60)
-
-    top_100_forever = get_top_100_games_forever()
-    top_100_last_two_weeks = get_top_100_games_two_weeks()
-
-    if top_100_forever is not None:
-        print("Adding top 100 games forever to corpus...")
-        steam_games_collection |= top_100_forever
-    else:
-        print("Top 100 forever failed, skipping")
-
-    if top_100_last_two_weeks is not None:
-        print("Adding top 100 games last two weeks to corpus...")
-        steam_games_collection |= top_100_last_two_weeks
-    else:
-        print("Top 100 last two weeks failed, skipping")
+        if top_100_last_two_weeks is not None:
+            print("Adding top 100 games last two weeks to corpus...")
+            steam_games_collection |= top_100_last_two_weeks
+        else:
+            print("Top 100 last two weeks failed, skipping")
 
     to_fetch = [game["appid"] for game in steam_games_collection.values() if needs_fetch(game["appid"], corpus)]
     print(
@@ -152,14 +194,8 @@ def build_steam_collection():
 
     print(f"Done. Corpus has {len(corpus)} records.")
 
+    build_df_table(corpus)
 
-# ---------------------------------------------------------------------
-# 2. df table
-# ---------------------------------------------------------------------
-# TODO: df = how many corpus games carry each tag
-# TODO: store N alongside df in the same file — IDF is wrong if they ever drift apart
-# TODO: N counts tagged games only
-# TODO: idf = log((1 + N) / (1 + df)) + 1   (smoothed, never zero)
 
 # ---------------------------------------------------------------------
 # 3. Taste weight per owned game
