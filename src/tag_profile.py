@@ -2,8 +2,10 @@
 
 import json
 import time
+from datetime import date
 from pathlib import Path
 from pprint import pprint
+from typing import Literal, TypedDict
 
 from steamspy import (
     GameSummary,
@@ -16,64 +18,139 @@ from steamspy import (
 # ---------------------------------------------------------------------
 # 1. Background corpus (one-time, cached)
 # ---------------------------------------------------------------------
-# TODO: collect appids from `all` pages 0, 2, 5 (1 req/60s) + top100forever + top100in2weeks
-# TODO: dedupe — the top100s are mostly already inside `all` page 0
-# TODO: random-sample ~1000 appids from that pool (appdetails is 1 req/sec, don't fetch all 3000)
-# TODO: appdetails each -> cache raw {appid: tags} to disk; this is the expensive step, never refetch
-#       per-id cache as JSON Lines (data/appdetails.jsonl), one json.dumps(game) + "\n" per line
-#       - write each game right after fetching it, file opened in append mode ("a")
-#       - on startup, read line by line -> set of done appids -> skip those in the loop
-#       - wrap json.loads in try/except JSONDecodeError: a crash can leave the last line half-written
-#       - normalize appids to int when loading (JSON keys/values may come back as str)
-#       - record failures too (None / no tags) so broken ids aren't refetched every run
-# TODO: drop untagged games and Utilities genre — same filters as candidates get
 # TODO: sanity check: most common corpus tags should be Indie/Action/Singleplayer/Casual.
 #       If Open World Survival Craft is near the top, the sample is contaminated.
 
 
-STEAM_BACKGROUND_CORPUS = Path("data/corpus/steam_bacground_corpus.json")
+class CorpusRecord(TypedDict):
+    appid: int
+    genre: str
+    tags: dict[str, int]
+    fetched_at: str
+    status: Literal["ok", "failed", "excluded"]
+
+
+STEAM_BACKGROUND_CORPUS = Path("data/corpus/steam_background_corpus.json")
+RETRY_FAILED_AFTER_DAYS = 7
+EXCLUDED_GENRES = {"utilities", "design & illustration", "video production", "animation & modeling"}
+EXCLUDED_EMPTY_GENRE_TAGS = {"software", "utilities", "benchmark", "game development", "documentary"}
+EMPTY_GENRE_TOP_TAGS = 2
+
+
+def is_excluded(genre: str, tags: dict[str, int]) -> bool:
+    """Non-games (software genres, untagged, or genre-less tools/docs) stay out of the corpus."""
+    if not tags:
+        return True
+
+    genres = {g.strip().lower() for g in genre.split(",") if g.strip()}
+    if genres:
+        return bool(genres & EXCLUDED_GENRES)
+
+    top_tags = sorted(tags, key=tags.__getitem__, reverse=True)[:EMPTY_GENRE_TOP_TAGS]
+    return any(tag.lower() in EXCLUDED_EMPTY_GENRE_TAGS for tag in top_tags)
+
+
+def load_cache_status(path: Path) -> dict[int, CorpusRecord]:
+    """appid -> CorpusRecord, one record per JSONL line."""
+    corpus: dict[int, CorpusRecord] = {}
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                record: CorpusRecord = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            corpus[int(record["appid"])] = record
+    return corpus
+
+
+def needs_fetch(appid: int, corpus: dict[int, CorpusRecord]) -> bool:
+    """Fetch if never cached, or if it failed and the retry window has passed. `ok` records are final."""
+    record = corpus.get(appid)
+    if record is None:
+        return True
+    if record["status"] == "ok":
+        return False
+    if record["status"] == "excluded":
+        return False
+    age = date.today() - date.fromisoformat(record["fetched_at"])
+    return age.days >= RETRY_FAILED_AFTER_DAYS
 
 
 def build_steam_collection():
-
     steam_games_collection: dict[str, GameSummary] = {}
+    corpus: dict[int, CorpusRecord] = {}
+    STEAM_BACKGROUND_CORPUS.parent.mkdir(parents=True, exist_ok=True)
 
+    if STEAM_BACKGROUND_CORPUS.is_file():
+        corpus = load_cache_status(STEAM_BACKGROUND_CORPUS)
+        print(f"Loaded {len(corpus)} cached records from {STEAM_BACKGROUND_CORPUS}")
+    else:
+        print(f"No cache at {STEAM_BACKGROUND_CORPUS}, starting fresh")
+
+    print("Fetching `all` pages 0, 2, 4, 6 (1 req/60s, ~3 min)...")
     for i in range(0, 7, 2):
         current_page = get_games_by_page(i)
 
         if current_page is not None:
-            print(f"Adding games of page {i} to corpus...")
+            print(f"Adding {len(current_page)} games of page {i} to corpus...")
             steam_games_collection |= current_page
+        else:
+            print(f"Page {i} failed, skipping")
 
-        time.sleep(60)
+        if i != 6:
+            print("Waiting 60s for the `all` rate limit...")
+            time.sleep(60)
 
     top_100_forever = get_top_100_games_forever()
     top_100_last_two_weeks = get_top_100_games_two_weeks()
 
     if top_100_forever is not None:
-        print("Addin top 100 games forever to corpus...")
+        print("Adding top 100 games forever to corpus...")
         steam_games_collection |= top_100_forever
+    else:
+        print("Top 100 forever failed, skipping")
 
     if top_100_last_two_weeks is not None:
         print("Adding top 100 games last two weeks to corpus...")
         steam_games_collection |= top_100_last_two_weeks
+    else:
+        print("Top 100 last two weeks failed, skipping")
 
-    # game_id = list(steam_games_collection.keys())[0:5]
-    #
-    # print(len(steam_games_collection))
-    # pprint(steam_games_collection[game_id[3]])
+    to_fetch = [game["appid"] for game in steam_games_collection.values() if needs_fetch(game["appid"], corpus)]
+    print(
+        f"Pool: {len(steam_games_collection)} games, {len(to_fetch)} to fetch, "
+        f"{len(steam_games_collection) - len(to_fetch)} already cached (~{len(to_fetch) // 60} min at 1 req/s)"
+    )
 
-    print("Writing json file")
-    STEAM_BACKGROUND_CORPUS.parent.mkdir(parents=True, exist_ok=True)
+    for n, game_id in enumerate(to_fetch, start=1):
+        game_details = get_game_details(game_id)
 
-    for game in steam_games_collection.values():
-        game_details = get_game_details(game["appid"])
-
+        game_corpus: CorpusRecord = {
+            "appid": game_id,
+            "tags": {},
+            "genre": "",
+            "fetched_at": date.today().isoformat(),
+            "status": "failed",
+        }
         if game_details is not None:
-            with open(STEAM_BACKGROUND_CORPUS, "a") as file:
-                file.write(
-                    json.dumps({game["appid"]: {"tags": game_details["tags"], "genre": game_details["genre"]}}) + "\n"
-                )
+            game_corpus["tags"] = game_details["tags"]
+            game_corpus["genre"] = game_details["genre"]
+
+            if is_excluded(game_details["genre"], game_details["tags"]):
+                game_corpus["status"] = "excluded"
+            else:
+                game_corpus["status"] = "ok"
+
+        corpus[game_id] = game_corpus
+        with open(STEAM_BACKGROUND_CORPUS, "a") as file:
+            file.write(json.dumps(game_corpus) + "\n")
+        print(f"[{n}/{len(to_fetch)}] appid {game_id}: {game_corpus['status']} ({len(game_corpus['tags'])} tags)")
+        time.sleep(1)
+
+    print(f"Done. Corpus has {len(corpus)} records.")
 
 
 # ---------------------------------------------------------------------
@@ -133,3 +210,12 @@ def test_func():
 
 if __name__ == "__main__":
     build_steam_collection()
+    # cache_data = load_cache_status(STEAM_BACKGROUND_CORPUS)
+    # items_list = list(cache_data.items())
+    #
+    # # Grab items by index (remember Python starts counting at 0)
+    # item_1 = items_list[1]  # Index 1 (The 2nd item: '1172470')
+    # item_4 = items_list[4]  #
+    # print(item_1)
+    #
+    # print(item_4)

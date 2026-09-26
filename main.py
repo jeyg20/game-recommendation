@@ -59,7 +59,7 @@ async def main():
                 continue
 
             entry["genres"] = genres
-            if type(steamspy_data) is list:
+            if isinstance(type(steamspy_data), list):
                 games_without_tags.append(appid)
             else:
                 entry["tags"] = steamspy_data["tags"]
