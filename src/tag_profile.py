@@ -32,7 +32,7 @@ class CorpusRecord(TypedDict):
 RETRY_FAILED_AFTER_DAYS = 7
 EXCLUDED_GENRES = {"utilities", "design & illustration", "video production", "animation & modeling"}
 EXCLUDED_TAGS = {"software", "utilities", "benchmark", "game development", "documentary", "movie", "feature film"}
-EMPTY_GENRE_TOP_TAGS = 2
+TOP_TAGS_CHECKED = 2
 
 
 def split_genres(genre: str) -> list[str]:
@@ -41,13 +41,13 @@ def split_genres(genre: str) -> list[str]:
 
 
 def is_excluded(genre: str, tags: dict[str, int]) -> bool:
-    """Non-games (software genres, untagged, or tools/docs). The one rule for both the corpus and the owned library."""
-    if not tags:
-        return True
+    """Non-games (software genres, or tools/docs by top tags). The one rule for both the corpus and the owned library.
 
+    Untagged games pass: SteamSpy has no tags yet for new releases. The corpus drops them separately.
+    """
     genres = {g.lower() for g in split_genres(genre)}
 
-    top_tags = sorted(tags, key=tags.__getitem__, reverse=True)[:EMPTY_GENRE_TOP_TAGS]
+    top_tags = sorted(tags, key=tags.__getitem__, reverse=True)[:TOP_TAGS_CHECKED]
     return any(tag.lower() in EXCLUDED_TAGS for tag in top_tags) or bool(genres & EXCLUDED_GENRES)
 
 
@@ -163,10 +163,12 @@ def build_steam_collection() -> None:
         else:
             print("Top 100 last two weeks failed, skipping")
 
-    to_fetch = [game["appid"] for game in steam_games_collection.values() if needs_fetch(game["appid"], corpus)]
+    # pool order first (most-owned games first), then cached appids so due `failed` records get retried
+    candidates = dict.fromkeys([*(game["appid"] for game in steam_games_collection.values()), *corpus])
+    to_fetch = [appid for appid in candidates if needs_fetch(appid, corpus)]
     print(
-        f"Pool: {len(steam_games_collection)} games, {len(to_fetch)} to fetch, "
-        f"{len(steam_games_collection) - len(to_fetch)} already cached (~{len(to_fetch) // 60} min at 1 req/s)"
+        f"Pool: {len(steam_games_collection)} games from SteamSpy, {len(corpus)} cached, "
+        f"{len(to_fetch)} to fetch (~{len(to_fetch) // 60} min at 1 req/s)"
     )
 
     for n, game_id in enumerate(to_fetch, start=1):
@@ -183,7 +185,8 @@ def build_steam_collection() -> None:
             game_corpus["tags"] = game_details["tags"]
             game_corpus["genre"] = game_details["genre"]
 
-            if is_excluded(game_details["genre"], game_details["tags"]):
+            # untagged games add nothing to df, so the corpus drops them on top of is_excluded
+            if not game_details["tags"] or is_excluded(game_details["genre"], game_details["tags"]):
                 game_corpus["status"] = "excluded"
             else:
                 game_corpus["status"] = "ok"

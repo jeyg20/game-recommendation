@@ -24,8 +24,17 @@ def fetch_owned_games() -> list[OwnedGame]:
     """The account's owned games from the Steam Web API."""
     print("retriving steam user games")
     owned_games = steam_api.get_owned_games(config.STEAM_ID, config.STEAM_API_KEY)
+    if owned_games is None:
+        raise RuntimeError("GetOwnedGames request failed (check STEAM_API_KEY / STEAM_ID)")
+    if "games" not in owned_games["response"]:
+        raise RuntimeError("Steam returned no games: set the profile's Game details to Public")
     print("games retrieved")
     return owned_games["response"]["games"]
+
+
+def int_keys(games: dict[int, LibraryGame]) -> dict[int, LibraryGame]:
+    """Re-key by int appid. A cache hit comes back from JSON keyed by str; a fresh build is already int."""
+    return {int(appid): game for appid, game in games.items()}
 
 
 def to_library(player_games: list[OwnedGame]) -> dict[int, LibraryGame]:
@@ -76,8 +85,8 @@ async def add_hltb_data(games: dict[int, LibraryGame]) -> dict[int, LibraryGame]
 
 async def main() -> None:
     player_games = storage.load_or_build(config.STEAM_DATA_FILE_PATH, fetch_owned_games)
-    games = storage.load_or_build(config.STEAMSPY_DATA, lambda: add_steamspy_data(to_library(player_games)))
-    games = await storage.load_or_build_async(config.HLTB_DATA_FILE_PATH, lambda: add_hltb_data(games))
+    games = int_keys(storage.load_or_build(config.STEAMSPY_DATA, lambda: add_steamspy_data(to_library(player_games))))
+    games = int_keys(await storage.load_or_build_async(config.HLTB_DATA_FILE_PATH, lambda: add_hltb_data(games)))
 
 
 if __name__ == "__main__":

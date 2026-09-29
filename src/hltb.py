@@ -14,11 +14,14 @@ async def get_game_hltb(game_name: str) -> HowLongToBeatEntry | None:
             best_element = max(results_list, key=lambda element: element.similarity)
             return best_element
     except Exception as e:
-        print(f"Game not found error: {e}")
+        print(f"HLTB search failed for {game_name!r}: {e}")
 
 
 async def main() -> None:
     game_info = await get_game_hltb("Portal 2")
+    if game_info is None:
+        print("No HLTB match for Portal 2")
+        return
     print(
         game_info.game_name,
         game_info.main_story,

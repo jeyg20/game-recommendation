@@ -13,9 +13,15 @@ def read_json(path: Path) -> object:
 
 
 def write_json(path: Path, data: object) -> None:
-    """Write `data` as indented JSON, creating parent folders. `data` must be JSON-serializable."""
+    """Write `data` as indented JSON, creating parent folders. `data` must be JSON-serializable.
+
+    Written to a temp file and swapped in, so a crash mid-write never leaves a truncated file behind
+    (load_or_build would otherwise treat it as a valid cache and fail on every run).
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    tmp_path = path.with_name(path.name + ".tmp")
+    tmp_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    tmp_path.replace(path)
 
 
 def read_jsonl(path: Path) -> list[object]:

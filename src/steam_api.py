@@ -1,6 +1,5 @@
 """Thin client for the Steam Web API (library, profile, stats) and the store `appdetails` endpoint."""
 
-import json
 from pathlib import Path
 from typing import NotRequired, TypedDict, cast
 
@@ -52,19 +51,18 @@ class StoreApp(TypedDict):
     """One app in an `appdetails` response; `data` is the full store page payload."""
 
     success: bool
-    data: dict[str, object]
+    data: NotRequired[dict[str, object]]  # missing when success is false
 
 
 def steam_request(url: str, params: Params) -> SteamResponse:
-    """GET `url`; parsed JSON on HTTP 200, otherwise None (exceptions are printed, not raised)."""
+    """GET `url`; parsed JSON on success, otherwise None (HTTP, network and JSON errors are printed, not raised)."""
     try:
-        res = requests.get(url, params)
-        if res.status_code == 200:
-            data = res.json()
-            return data
-    except Exception as e:
-        print(res.url)
-        print(e)
+        res = requests.get(url, params=params, timeout=10)
+        res.raise_for_status()
+        return res.json()
+    except requests.RequestException as e:
+        print(f"Steam request failed {url}: {e}")
+        return None
 
 
 def get_game_details(game_id: str) -> dict[str, StoreApp] | None:
@@ -77,28 +75,28 @@ def get_game_details(game_id: str) -> dict[str, StoreApp] | None:
 def get_player_sumamry(steam_id: str, steam_api_key: str) -> SteamResponse:
     """Public profile summary for one SteamID."""
     print("Getting player summary")
-    params: Params = {"key": steam_api_key, "steamids": steam_id, "format": json}
+    params: Params = {"key": steam_api_key, "steamids": steam_id, "format": "json"}
     return steam_request(PLAYER_SUMMARY, params)
 
 
 def get_owned_games(steam_id: str, steam_api_key: str) -> OwnedGamesResponse | None:
     """Every game the account owns, with names and playtime."""
     print("Getting player owned games")
-    params: Params = {"key": steam_api_key, "steamid": steam_id, "format": json, "include_appinfo": 1}
+    params: Params = {"key": steam_api_key, "steamid": steam_id, "format": "json", "include_appinfo": 1}
     return cast(OwnedGamesResponse | None, steam_request(PLAYER_OWNED_GAMES, params))
 
 
 def get_recent_games(steam_id: str, steam_api_key: str) -> SteamResponse:
     """Games played in the last two weeks."""
     print("Getting player recent games")
-    params: Params = {"key": steam_api_key, "steamid": steam_id, "format": json}
+    params: Params = {"key": steam_api_key, "steamid": steam_id, "format": "json"}
     return steam_request(PLAYER_RECENT_GAMES, params)
 
 
 def get_player_stats(steam_id: str, steam_api_key: str, game_id: str) -> SteamResponse:
     """The player's stats and achievements for one game."""
     print("Getting player stats")
-    params: Params = {"appid": game_id, "key": steam_api_key, "steamid": steam_id, "format": json}
+    params: Params = {"appid": game_id, "key": steam_api_key, "steamid": steam_id, "format": "json"}
     return steam_request(PLAYER_GAME_STATS, params)
 
 
@@ -108,14 +106,16 @@ def get_player_stats(steam_id: str, steam_api_key: str, game_id: str) -> SteamRe
 
 if __name__ == "__main__":
     owned_games = get_owned_games(config.STEAM_ID, config.STEAM_API_KEY)
+    if owned_games is None:
+        raise SystemExit("GetOwnedGames request failed")
     player_games = owned_games["response"]
     storage.write_json(Path("player_owned_games.json"), player_games)
 
     game_ommit_list = ["test", "alpha", "beta"]
     game_names_list = [
         game["name"]
-        for game in player_games["games"]
-        if not any(omit in game.get("name", "").lower() and game.get("playtime_forever") for omit in game_ommit_list)
+        for game in player_games.get("games", [])
+        if not any(omit in game["name"].lower() for omit in game_ommit_list)
     ]
 
     # games_achivements_dict = {}
