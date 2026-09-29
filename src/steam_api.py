@@ -64,7 +64,7 @@ def get_player_stats(steam_id: str, steam_api_key: str, game_id: str) -> SteamRe
 def write_file(file_name: Path, data) -> None:
     print("Writing json file")
     file_name.parent.mkdir(parents=True, exist_ok=True)
-    with open(file_name, "w") as file:
+    with open(file_name, "w", encoding="utf-8") as file:
         file.write(json.dumps(data, indent=2))
 
 

@@ -31,7 +31,7 @@ if __name__ == "__main__":
     ark_se_data = get_game_data(346110)
     filtered_descriptions = filter_out_descriptions(ark_se_data, "346110")
 
-    with open("ark_se_data.json", "w") as file:
+    with open("ark_se_data.json", "w", encoding="utf-8") as file:
         file.write(json.dumps(filtered_descriptions, indent=2))
 
     print(json.dumps(filtered_descriptions, indent=2))

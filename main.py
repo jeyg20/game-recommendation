@@ -25,7 +25,7 @@ async def main():
         player_games = owned_games["response"]["games"]
         steam_api.write_file(STEAM_DATA_FILE_PATH, player_games)
     else:
-        with open(STEAM_DATA_FILE_PATH) as file:
+        with open(STEAM_DATA_FILE_PATH, encoding="utf-8") as file:
             player_games = json.load(file)
 
     games: dict[int, dict] = {}
@@ -67,7 +67,7 @@ async def main():
 
         steam_api.write_file(STEAMSPY_DATA, games)
     else:
-        with open(STEAMSPY_DATA) as file:
+        with open(STEAMSPY_DATA, encoding="utf-8") as file:
             games = json.load(file)
 
     if not HLTB_DATA_FILE_PATH.is_file():
@@ -79,7 +79,7 @@ async def main():
 
         steam_api.write_file(HLTB_DATA_FILE_PATH, games)
     else:
-        with open(HLTB_DATA_FILE_PATH) as file:
+        with open(HLTB_DATA_FILE_PATH, encoding="utf-8") as file:
             games = json.load(file)
 
 

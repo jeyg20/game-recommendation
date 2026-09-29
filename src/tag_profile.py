@@ -3,6 +3,7 @@
 import json
 import math
 import time
+from collections import Counter
 from datetime import date
 from pathlib import Path
 from pprint import pprint
@@ -26,6 +27,7 @@ class CorpusRecord(TypedDict):
 
 
 STEAM_BACKGROUND_CORPUS = Path("data/corpus/steam_background_corpus.json")
+DF_TABLE_PATH = Path("data/corpus/df_table.json")
 RETRY_FAILED_AFTER_DAYS = 7
 EXCLUDED_GENRES = {"utilities", "design & illustration", "video production", "animation & modeling"}
 EXCLUDED_TAGS = {"software", "utilities", "benchmark", "game development", "documentary", "movie", "feature film"}
@@ -46,7 +48,7 @@ def is_excluded(genre: str, tags: dict[str, int]) -> bool:
 def load_cache_status(path: Path) -> dict[int, CorpusRecord]:
     """appid -> CorpusRecord, one record per JSONL line."""
     corpus: dict[int, CorpusRecord] = {}
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -84,30 +86,47 @@ def needs_fetch(appid: int, corpus: dict[int, CorpusRecord]) -> bool:
 #       - steps 4/5 load the saved table so profile and candidates share the same one
 
 
-def build_df_table(corpus: dict[int, CorpusRecord]):
+class DfTable(TypedDict):
+    n: int
+    df: dict[str, int]
+    idf: dict[str, float]
+
+
+def load_df_table(path: Path) -> DfTable:
+    json_string = path.read_text(encoding="utf-8")
+    return json.loads(json_string)
+
+
+def save_df_table(table: DfTable, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(table, indent=4), encoding="utf-8")
+
+
+def build_df_table(corpus: dict[int, CorpusRecord]) -> DfTable:
     """Create df table
 
     df = how many corpus games carry each tag
     N counts tagged games only
     idf = log((1 + N) / (1 + df)) + 1   (smoothed, never zero)
     """
-    tag_frequency = {}
-    n = 0
-    for key in corpus:
-        if corpus[key]["status"] == "ok":
-            n += 1
-            tags = corpus[key]["tags"]
-            for tag in tags:
-                if tag not in tag_frequency:
-                    tag_frequency[tag] = 1
-                else:
-                    tag_frequency[tag] += 1
 
-    df_table = {"n": n, "df": {}, "idf": {}}
+    ok_records = []
 
-    for tag, df_value in tag_frequency.items():
-        df_table["df"][tag] = df_value
-        df_table["idf"][tag] = math.log((1 + n) / (1 + df_value)) + 1
+    for record in corpus.values():
+        if record["status"] == "ok":
+            ok_records.append(record)
+
+    n = len(ok_records)
+
+    counter = Counter()
+    for record in ok_records:
+        counter.update(record["tags"].keys())
+
+    df_table: DfTable = {
+        "n": n,
+        "df": dict(counter),
+        "idf": {tag: math.log((1 + n) / (1 + df_value)) + 1 for tag, df_value in counter.items()},
+    }
 
     return df_table
 
@@ -187,14 +206,16 @@ def build_steam_collection():
                 game_corpus["status"] = "ok"
 
         corpus[game_id] = game_corpus
-        with open(STEAM_BACKGROUND_CORPUS, "a") as file:
+        with open(STEAM_BACKGROUND_CORPUS, "a", encoding="utf-8") as file:
             file.write(json.dumps(game_corpus) + "\n")
         print(f"[{n}/{len(to_fetch)}] appid {game_id}: {game_corpus['status']} ({len(game_corpus['tags'])} tags)")
         time.sleep(1)
 
     print(f"Done. Corpus has {len(corpus)} records.")
 
-    build_df_table(corpus)
+    df_table = build_df_table(corpus)
+
+    save_df_table(df_table, DF_TABLE_PATH)
 
 
 # ---------------------------------------------------------------------
