@@ -1,10 +1,12 @@
+"""HowLongToBeat lookup: best name match for a game."""
+
 import asyncio
-from typing import AnyStr
 
-from howlongtobeatpy import HowLongToBeat
+from howlongtobeatpy import HowLongToBeat, HowLongToBeatEntry
 
 
-async def get_game_hltb(game_name: str):
+async def get_game_hltb(game_name: str) -> HowLongToBeatEntry | None:
+    """Search HLTB and return the result most similar to `game_name`, or None if nothing matched or the search failed."""
     try:
         results_list = await HowLongToBeat().async_search(game_name, similarity_case_sensitive=False)
 
@@ -15,7 +17,7 @@ async def get_game_hltb(game_name: str):
         print(f"Game not found error: {e}")
 
 
-async def main():
+async def main() -> None:
     game_info = await get_game_hltb("Portal 2")
     print(
         game_info.game_name,

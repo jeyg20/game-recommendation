@@ -1,15 +1,14 @@
-import os
+"""Gemini client that turns a gamer's library summary into a recommendation."""
 
-from dotenv import load_dotenv
 from google import genai
 from pydantic import BaseModel, Field
 
-load_dotenv()
-gemini_api = os.getenv("GEMINI_API")
+from src import config
 
 
-def generate_content(gamer_info: str):
-    client = genai.Client(api_key=gemini_api)
+def generate_content(gamer_info: str) -> str | None:
+    """Ask Gemini for the next game to play; returns the response text (None if the model returned no text)."""
+    client = genai.Client(api_key=config.GEMINI_API)
     prompt = """The following information belongs to a gamer, it holds data of the games and categories they have play
     and enojoyed the most, I want you to analaized this data and recommend the next game they should play, the gamer
     information also has the list of games they owned but haven't play yet, if any of this games allign with the user
@@ -21,5 +20,7 @@ def generate_content(gamer_info: str):
 
 
 class GameCategories(BaseModel):
+    """Structured-output schema: a game and its categories."""
+
     name: str = Field(description="Name of the game")
     categories: list[str] = Field(description="categories of the game")

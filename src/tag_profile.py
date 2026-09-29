@@ -1,45 +1,51 @@
 """Build a taste profile from the owned library, weighted against a Steam-wide tag corpus."""
 
-import json
 import math
 import time
 from collections import Counter
 from datetime import date
 from pathlib import Path
 from pprint import pprint
-from typing import Literal, TypedDict
+from typing import Literal, TypedDict, cast
 
-from steamspy import (
+from src.config import DF_TABLE_PATH, STEAM_BACKGROUND_CORPUS
+from src.steamspy import (
     GameSummary,
     get_game_details,
     get_games_by_page,
     get_top_100_games_forever,
     get_top_100_games_two_weeks,
 )
+from src.storage import append_jsonl, read_jsonl, write_json
 
 
 class CorpusRecord(TypedDict):
+    """One line of the corpus JSONL: a fetch attempt for one app. The last line per appid wins."""
+
     appid: int
     genre: str
     tags: dict[str, int]
-    fetched_at: str
+    fetched_at: str  # ISO date, drives the failed-record retry window
     status: Literal["ok", "failed", "excluded"]
 
 
-STEAM_BACKGROUND_CORPUS = Path("data/corpus/steam_background_corpus.json")
-DF_TABLE_PATH = Path("data/corpus/df_table.json")
 RETRY_FAILED_AFTER_DAYS = 7
 EXCLUDED_GENRES = {"utilities", "design & illustration", "video production", "animation & modeling"}
 EXCLUDED_TAGS = {"software", "utilities", "benchmark", "game development", "documentary", "movie", "feature film"}
 EMPTY_GENRE_TOP_TAGS = 2
 
 
+def split_genres(genre: str) -> list[str]:
+    """SteamSpy's comma-separated genre string -> list, blanks dropped ("" -> [])."""
+    return [g.strip() for g in genre.split(",") if g.strip()]
+
+
 def is_excluded(genre: str, tags: dict[str, int]) -> bool:
-    """Non-games (software genres, untagged, or tools/docs) stay out of the corpus."""
+    """Non-games (software genres, untagged, or tools/docs). The one rule for both the corpus and the owned library."""
     if not tags:
         return True
 
-    genres = {g.strip().lower() for g in genre.split(",") if g.strip()}
+    genres = {g.lower() for g in split_genres(genre)}
 
     top_tags = sorted(tags, key=tags.__getitem__, reverse=True)[:EMPTY_GENRE_TOP_TAGS]
     return any(tag.lower() in EXCLUDED_TAGS for tag in top_tags) or bool(genres & EXCLUDED_GENRES)
@@ -48,16 +54,9 @@ def is_excluded(genre: str, tags: dict[str, int]) -> bool:
 def load_cache_status(path: Path) -> dict[int, CorpusRecord]:
     """appid -> CorpusRecord, one record per JSONL line."""
     corpus: dict[int, CorpusRecord] = {}
-    with open(path, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                record: CorpusRecord = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            corpus[int(record["appid"])] = record
+    for raw in read_jsonl(path):
+        record = cast(CorpusRecord, raw)
+        corpus[int(record["appid"])] = record
     return corpus
 
 
@@ -74,32 +73,12 @@ def needs_fetch(appid: int, corpus: dict[int, CorpusRecord]) -> bool:
     return age.days >= RETRY_FAILED_AFTER_DAYS
 
 
-# ---------------------------------------------------------------------
-# 2. df table
-# ---------------------------------------------------------------------
-# TODO: refactor build_df_table:
-#       - filter `ok` records once into a list; N = its length, df counts over the same list
-#       - count df with collections.Counter (.update(record["tags"]) per ok record), loop corpus.values()
-#       - use the Counter as "df" directly, build "idf" with a dict comprehension
-#       - add a DfTable TypedDict (n: int, df: dict[str, int], idf: dict[str, float]) as return type
-#       - keep build pure; separate save/load to data/corpus/df_table.json
-#       - steps 4/5 load the saved table so profile and candidates share the same one
-
-
 class DfTable(TypedDict):
+    """Document frequency per tag over the `ok` corpus; saved to DF_TABLE_PATH."""
+
     n: int
     df: dict[str, int]
     idf: dict[str, float]
-
-
-def load_df_table(path: Path) -> DfTable:
-    json_string = path.read_text(encoding="utf-8")
-    return json.loads(json_string)
-
-
-def save_df_table(table: DfTable, path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(table, indent=4), encoding="utf-8")
 
 
 def build_df_table(corpus: dict[int, CorpusRecord]) -> DfTable:
@@ -110,7 +89,7 @@ def build_df_table(corpus: dict[int, CorpusRecord]) -> DfTable:
     idf = log((1 + N) / (1 + df)) + 1   (smoothed, never zero)
     """
 
-    ok_records = []
+    ok_records: list[CorpusRecord] = []
 
     for record in corpus.values():
         if record["status"] == "ok":
@@ -118,7 +97,7 @@ def build_df_table(corpus: dict[int, CorpusRecord]) -> DfTable:
 
     n = len(ok_records)
 
-    counter = Counter()
+    counter: Counter[str] = Counter()
     for record in ok_records:
         counter.update(record["tags"].keys())
 
@@ -131,16 +110,20 @@ def build_df_table(corpus: dict[int, CorpusRecord]) -> DfTable:
     return df_table
 
 
-def reclassify_cache(corpus: dict[int, CorpusRecord]):
+def reclassify_cache(corpus: dict[int, CorpusRecord]) -> None:
+    """WIP: re-run `is_excluded` over cached records after the exclusion rules change."""
     for item in corpus:
         if is_excluded(corpus[item]["genre"], corpus[item]["tags"]):
             pass
 
 
-def build_steam_collection():
+def build_steam_collection() -> None:
+    """Grow the background corpus from SteamSpy (asks before paging), fetch tags for new appids, save the df table.
+
+    Every fetch is appended to the corpus JSONL as it happens, so an interrupted run resumes where it stopped.
+    """
     steam_games_collection: dict[str, GameSummary] = {}
     corpus: dict[int, CorpusRecord] = {}
-    STEAM_BACKGROUND_CORPUS.parent.mkdir(parents=True, exist_ok=True)
 
     if STEAM_BACKGROUND_CORPUS.is_file():
         corpus = load_cache_status(STEAM_BACKGROUND_CORPUS)
@@ -206,8 +189,7 @@ def build_steam_collection():
                 game_corpus["status"] = "ok"
 
         corpus[game_id] = game_corpus
-        with open(STEAM_BACKGROUND_CORPUS, "a", encoding="utf-8") as file:
-            file.write(json.dumps(game_corpus) + "\n")
+        append_jsonl(STEAM_BACKGROUND_CORPUS, game_corpus)
         print(f"[{n}/{len(to_fetch)}] appid {game_id}: {game_corpus['status']} ({len(game_corpus['tags'])} tags)")
         time.sleep(1)
 
@@ -215,7 +197,7 @@ def build_steam_collection():
 
     df_table = build_df_table(corpus)
 
-    save_df_table(df_table, DF_TABLE_PATH)
+    write_json(DF_TABLE_PATH, df_table)
 
 
 # ---------------------------------------------------------------------
@@ -249,7 +231,8 @@ def build_steam_collection():
 #       subtracting owned appids from candidates fails silently otherwise
 
 
-def test_func():
+def test_func() -> None:
+    """Scratch check of the `all` page shape."""
     games_dict = get_games_by_page(0)
 
     if games_dict is None:

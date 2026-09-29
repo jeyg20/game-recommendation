@@ -1,3 +1,5 @@
+"""SteamSpy API client: per-game tags/genre and paged or top-100 game lists."""
+
 import json
 import logging
 from collections.abc import Mapping
@@ -41,6 +43,7 @@ class GameDetails(GameSummary):
 
 
 def steamspy_request(query_params: Mapping[str, str | int]) -> object | None:
+    """GET the SteamSpy API; parsed JSON, or None on any HTTP/network/JSON error (logged)."""
     try:
         res = requests.get(STEAM_SPY_URL, params=query_params, timeout=10)
         res.raise_for_status()
@@ -51,6 +54,7 @@ def steamspy_request(query_params: Mapping[str, str | int]) -> object | None:
 
 
 def get_game_details(appid: int) -> GameDetails | None:
+    """Full details for one app (tags normalized to a dict), or None if the request failed or the appid is unknown."""
     data = steamspy_request({"request": "appdetails", "appid": appid})
     # Non-dict = failed/garbage response; null name = unknown appid stub.
     if not isinstance(data, dict) or data.get("name") is None:
@@ -61,29 +65,35 @@ def get_game_details(appid: int) -> GameDetails | None:
     return game
 
 
-def get_games_by_tag(game_tag: str) -> dict[str, GameSummary] | None:
-    data = steamspy_request({"request": "tag", "tag": game_tag})
+def _get_summaries(query_params: Mapping[str, str | int]) -> dict[str, GameSummary] | None:
+    """Shared by every list endpoint: appid -> GameSummary, or None on a failed request."""
+    data = steamspy_request(query_params)
     return cast(dict[str, GameSummary], data) if isinstance(data, dict) else None
+
+
+def get_games_by_tag(game_tag: str) -> dict[str, GameSummary] | None:
+    """Every game with this user tag, e.g. "Roguelike"."""
+    return _get_summaries({"request": "tag", "tag": game_tag})
 
 
 def get_games_by_genre(game_genre: str) -> dict[str, GameSummary] | None:
-    data = steamspy_request({"request": "genre", "genre": game_genre})
-    return cast(dict[str, GameSummary], data) if isinstance(data, dict) else None
+    """Every game in this store genre, e.g. "Action"."""
+    return _get_summaries({"request": "genre", "genre": game_genre})
 
 
 def get_games_by_page(page_num: int) -> dict[str, GameSummary] | None:
-    data = steamspy_request({"request": "all", "page": page_num})
-    return cast(dict[str, GameSummary], data) if isinstance(data, dict) else None
+    """One 1000-game page of the `all` listing (ordered by owners). Rate limited to 1 request/60s."""
+    return _get_summaries({"request": "all", "page": page_num})
 
 
 def get_top_100_games_forever() -> dict[str, GameSummary] | None:
-    data = steamspy_request({"request": "top100forever"})
-    return cast(dict[str, GameSummary], data) if isinstance(data, dict) else None
+    """Top 100 games by players since March 2009."""
+    return _get_summaries({"request": "top100forever"})
 
 
 def get_top_100_games_two_weeks() -> dict[str, GameSummary] | None:
-    data = steamspy_request({"request": "top100in2weeks"})
-    return cast(dict[str, GameSummary], data) if isinstance(data, dict) else None
+    """Top 100 games by players in the last two weeks."""
+    return _get_summaries({"request": "top100in2weeks"})
 
 
 if __name__ == "__main__":
