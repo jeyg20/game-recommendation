@@ -5,10 +5,10 @@ reads: keep them accurate. Library, df table and profile are loaded once and reu
 """
 
 import difflib
-from typing import TypedDict
+from typing import TypedDict, cast
 
 from src import library, steam_api, steamspy
-from src.history import load_turns
+from src.history import list_sessions, load_session
 from src.library import LibraryGame
 from src.preferences import Preferences, load_preferences, merge, save_preferences, without
 from src.recommend import Recommendation, recommend, score, score_backlog
@@ -38,9 +38,18 @@ class State(TypedDict):
     games: dict[int, LibraryGame] | None
     df_table: DfTable | None
     profile: TagVector | None
+    session: str  # set by the Assistant: the session being logged
+    new_session_requested: bool  # set by start_new_session, acted on by the Assistant once the turn ends
 
 
-state: State = {"player_games": None, "games": None, "df_table": None, "profile": None}
+state: State = {
+    "player_games": None,
+    "games": None,
+    "df_table": None,
+    "profile": None,
+    "session": "",
+    "new_session_requested": False,
+}
 reference_cache: dict[str, ReferenceGame | None] = {}  # lowercased name -> best match
 
 
@@ -95,6 +104,21 @@ def find_game(name: str) -> ReferenceGame | None:
     return reference_cache[key]
 
 
+BACKLOG_MAX_HOURS = 2.0  # "barely started": under this many hours...
+BACKLOG_MAX_STORY_SHARE = 0.25  # ...and under this share of the HLTB main story, when HLTB has one
+
+
+def is_backlog(game: LibraryGame) -> bool:
+    """Never launched, or tried briefly and left. Short games that were actually finished don't count."""
+    hours = game["playtime_hours"]
+    if hours == 0:
+        return True
+    if hours >= BACKLOG_MAX_HOURS:
+        return False
+    story = game["main_story_hours"]
+    return not story or hours < BACKLOG_MAX_STORY_SHARE * story
+
+
 def compact(recommendations: list[Recommendation], limit: int) -> list[dict[str, object]]:
     return [
         {
@@ -122,7 +146,7 @@ def get_taste_profile(top_n: int = 15) -> dict[str, object]:
     return {
         "top_tags": rounded(profile, top_tags(profile, top_n)),
         "most_played": [{"name": g["name"], "hours": round(g["playtime_hours"], 1)} for g in played[:10]],
-        "unplayed_owned_games": sum(1 for g in games.values() if g["playtime_hours"] == 0),
+        "backlog_games": sum(1 for g in games.values() if is_backlog(g)),
         "library_size": len(games),
         "saved_preferences": load_preferences(),
     }
@@ -147,7 +171,7 @@ def recommend_games(
       boost_tags: Steam user tags to weigh more, e.g. ["Roguelike", "Co-op"]. Must be real Steam tag names.
       avoid_tags: Steam user tags to steer away from; games with one among their strongest tags are dropped.
       limit: How many recommendations (and backlog games) to return.
-      include_backlog: Also rank owned games the player has never launched.
+      include_backlog: Also rank owned games the player never launched or only tried briefly.
       use_saved_preferences: Apply the player's saved preferences on top of this request's.
     """
     player_games, games, df_table, profile = ensure_loaded()
@@ -192,10 +216,12 @@ def recommend_games(
     if unknown_boost or unknown_avoid:
         result["unknown_tags_ignored"] = unknown_boost | unknown_avoid
     if include_backlog:
-        backlog = [
-            (g["appid"], g["name"], g["tags"] or {}) for g in games.values() if g["tags"] and g["playtime_hours"] == 0
+        backlog = [(g["appid"], g["name"], g["tags"] or {}) for g in games.values() if g["tags"] and is_backlog(g)]
+        ranked = score_backlog(backlog, taste, df_table)[:limit]
+        result["backlog"] = [
+            {**pick, "playtime_hours": round(games[rec["appid"]]["playtime_hours"], 1)}
+            for rec, pick in zip(ranked, compact(ranked, limit), strict=True)
         ]
-        result["backlog"] = compact(score_backlog(backlog, taste, df_table), limit)
     return result
 
 
@@ -298,33 +324,70 @@ def update_background_corpus(fetch_new_listings: bool = False) -> dict[str, obje
     return {"corpus_games": df_table["n"], "distinct_tags": len(df_table["df"])}
 
 
-def get_recommendation_history(limit: int = 5, prompt_contains: str | None = None) -> dict[str, object]:
-    """Past recommendation requests from the log, newest first: what the player asked, how it was steered, top picks.
+def picks_with_reasons(picks: object, limit: int = 5) -> list[dict[str, object]]:
+    """The logged picks' name, score and matched tags: the reason they were picked, so it can be retold faithfully."""
+    if not isinstance(picks, list):
+        return []
+    return [
+        {"name": pick["name"], "score": pick["score"], "matched_tags": pick["matched_tags"]}
+        for pick in cast(list[dict[str, object]], picks[:limit])
+    ]
+
+
+def get_recommendation_history(session: str | None = None, limit: int = 5) -> dict[str, object]:
+    """Recommendation requests from the session logs, newest first: what was asked, how it was steered, top picks.
+
+    Describe past picks only from their matched tags; the log holds nothing else about them.
 
     Args:
-      limit: How many past requests to return.
-      prompt_contains: Only requests whose prompt contains this text (case-insensitive).
+      session: A session id from list_past_sessions, or "all" for every session. Omit for the current session.
+      limit: How many requests to return.
     """
+    if session == "all":
+        sessions = [summary["session"] for summary in reversed(list_sessions())]
+    else:
+        sessions = [session or state["session"]]
+
     entries: list[dict[str, object]] = []
-    for turn in reversed(load_turns()):
-        if prompt_contains and prompt_contains.lower() not in turn["prompt"].lower():
-            continue
-        for call in turn["tool_calls"]:
-            if call["name"] != "recommend_games" or not isinstance(call["result"], dict):
-                continue
-            picks = call["result"].get("recommendations", [])
-            entries.append(
-                {
-                    "timestamp": turn["timestamp"],
-                    "prompt": turn["prompt"],
-                    "args": call["args"],
-                    "applied": call["result"].get("applied"),
-                    "top_picks": [pick["name"] for pick in picks[:5]] if isinstance(picks, list) else [],
-                }
-            )
-        if len(entries) >= limit:
-            break
-    return {"history": entries[:limit]}
+    for session_id in sessions:
+        for turn in reversed(load_session(session_id)):
+            for call in turn["tool_calls"]:
+                result = call["result"]
+                if call["name"] != "recommend_games" or not isinstance(result, dict):
+                    continue
+                entries.append(
+                    {
+                        "session": session_id,
+                        "timestamp": turn["timestamp"],
+                        "prompt": turn["prompt"],
+                        "applied": result.get("applied"),
+                        "top_picks": picks_with_reasons(result.get("recommendations")),
+                        "backlog_picks": picks_with_reasons(result.get("backlog")),
+                    }
+                )
+            if len(entries) >= limit:
+                return {"history": entries[:limit]}
+    return {"history": entries}
+
+
+def list_past_sessions(limit: int = 10) -> dict[str, object]:
+    """Logged chat sessions, newest first, with their first prompt, so the player can pick one to compare against.
+
+    Args:
+      limit: How many sessions to return.
+    """
+    sessions = list(reversed(list_sessions()))[:limit]
+    return {"current_session": state["session"], "sessions": sessions}
+
+
+def start_new_session() -> dict[str, object]:
+    """Close this session's log and start a fresh one, with no memory of this conversation.
+
+    Call when the player asks for a new session or a clean slate. It takes effect after this reply, so finish the
+    reply first. Saved preferences still apply; use update_preferences to change them.
+    """
+    state["new_session_requested"] = True
+    return {"closed_session": state["session"], "status": "a new session starts with the next prompt"}
 
 
 TOOLS = [
@@ -335,4 +398,6 @@ TOOLS = [
     refresh_library,
     update_background_corpus,
     get_recommendation_history,
+    list_past_sessions,
+    start_new_session,
 ]

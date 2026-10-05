@@ -9,7 +9,8 @@ against a taste profile built from your own playtime.
 python -m src.tag_profile   # once: build the Steam-wide tag corpus (asks before paging SteamSpy, ~1h)
 python main.py              # chat with the assistant
 python main.py --report     # one-shot ranked report (saved preferences applied), no LLM
-python main.py --history 20 # print the last 20 logged turns
+python main.py --sessions   # list logged chat sessions
+python main.py --open 3     # print session 3 in full
 ```
 
 Needs `STEAM_API_KEY`, `STEAM_ID` and `GEMINI_API` in `.env` (`--report` works without `GEMINI_API`).
@@ -27,14 +28,21 @@ Gemini (`src/ai_agent.py`) reads your prompt and calls the tools in `src/tools.p
 | `update_preferences` | Saves steers that apply to every future request (`data/preferences.json`) |
 | `refresh_library` | Refetches the Steam library, tags and HLTB times; reports new games and new playtime |
 | `update_background_corpus` | Grows the tag corpus and rebuilds the idf table (slow, asks first) |
-| `get_recommendation_history` | Past requests, how they were steered and their top picks |
+| `get_recommendation_history` | Past requests in this session (or another, or all): how they were steered, top picks and why |
+| `list_past_sessions` | Logged sessions with their first prompt |
+| `start_new_session` | Closes this session's log and starts a fresh one (also `/new`) |
 
 Steering: the library profile is scaled to unit length, the reference games' tag vectors are added on top (sharing a
 weight of 1.0 between them), boosted tags get half the strongest tag's weight, and avoided tags are removed from the
 profile. Any candidate with an avoided tag among its 5 strongest is dropped.
 
-Every turn is appended to `data/logs/history.jsonl`: prompt, each tool call with its arguments and full result, and
-the reply. In the chat, `/history [n]` lists past turns with their top picks and `/show <n>` prints one in full.
+**Sessions.** Each `python main.py` run is a session with its own log, `data/logs/sessions/<start time>.jsonl`.
+A turn records the prompt, each tool call with its arguments and full result, and the reply. `/new` (or asking for
+a new session) closes the log and resets the model's memory, so a new request isn't colored by the last one; saved
+preferences still apply. In the chat: `/history` shows this session, `/sessions` lists all, `/open <n>` prints one.
+
+**Backlog.** Owned games never launched or barely started: under 2 hours, and under a quarter of the HLTB main story
+when there is one (so a finished 90-minute game doesn't count).
 
 ## Pipeline
 
@@ -50,7 +58,7 @@ the reply. In the chat, `/history [n]` lists past turns with their top picks and
 6. **Narrow** — shovelware floor (≥500 reviews, ≥75% positive), rank by number of tag pools hit, keep 100.
 7. **Score** — finalists' full tag vectors (reused from the corpus, missing ones fetched and appended to it), cosine
    against the profile with the same idf table.
-8. **Backlog** — zero-playtime owned games scored the same way, as a separate section.
+8. **Backlog** — unplayed or barely started owned games scored the same way, as a separate section.
 9. **Explain** — the assistant explains each pick from its matched tags (see above).
 
 `--report` prints the ranking and saves it to `data/output/recommendations.json`.

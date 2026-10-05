@@ -26,4 +26,4 @@ RECOMMENDATIONS_PATH = Path("data/output/recommendations.json")
 
 # Assistant (ai_agent.py)
 PREFERENCES_PATH = Path("data/preferences.json")
-HISTORY_PATH = Path("data/logs/history.jsonl")
+SESSIONS_DIR = Path("data/logs/sessions")  # one JSONL log per chat session

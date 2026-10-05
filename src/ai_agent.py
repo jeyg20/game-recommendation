@@ -6,8 +6,8 @@ Function calling is handled by hand (automatic calling disabled) so every call a
 from google import genai
 from google.genai import types
 
-from src import config
-from src.history import ToolCall, log_turn
+from src import config, tools
+from src.history import ToolCall, log_turn, new_session_id
 from src.tools import TOOLS
 
 MODEL = "gemini-3.1-flash-lite"
@@ -24,22 +24,33 @@ Steam library, build a taste profile from their playtime, rank games against it,
 - Tags must be Steam user tag names. If a tool reports unknown tags, tell the player and offer the suggestions.
 - Owned games the player never launched come back as the backlog; bring them up when they fit well.
 - update_background_corpus is slow: ask before calling it. refresh_library takes a minute or two: say so first.
-- When the player asks what you recommended before, or to compare with past prompts, use
-  get_recommendation_history.
+- Each session is logged separately. get_recommendation_history reads the current session by default; for earlier
+  ones use list_past_sessions, then pass a session id (or "all"). When the player asks for a new session or a clean
+  slate, call start_new_session.
+- The backlog is owned games never launched or only tried briefly (playtime_hours shows which).
 - Be concise. Use short lists.
 """
 
 
 class Assistant:
-    """One chat session. History is kept by the Gemini chat object; every turn is appended to the log."""
+    """The chat with Gemini. Each session has its own log file and its own model memory; new_session resets both."""
 
-    def __init__(self, session: str) -> None:
+    def __init__(self) -> None:
         if not config.GEMINI_API:
             raise RuntimeError("GEMINI_API is not set in .env")
-        self.session = session
         self.tools = {tool.__name__: tool for tool in TOOLS}
         # kept on self: once the Client is garbage-collected it closes its HTTP client and the chat stops working
         self.client = genai.Client(api_key=config.GEMINI_API)
+        self.new_session()
+
+    @property
+    def session(self) -> str:
+        return tools.state["session"]
+
+    def new_session(self) -> None:
+        """Fresh log file and a fresh chat: nothing from the previous session reaches the model."""
+        tools.state["session"] = new_session_id()
+        tools.state["new_session_requested"] = False
         self.chat = self.client.chats.create(
             model=MODEL,
             config=types.GenerateContentConfig(
@@ -79,4 +90,6 @@ class Assistant:
 
         reply = response.text or "(no reply: the model kept calling tools; try rephrasing)"
         log_turn(self.session, prompt, calls, reply)
+        if tools.state["new_session_requested"]:
+            self.new_session()
         return reply

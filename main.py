@@ -1,9 +1,10 @@
 """Game recommendation assistant: chat with Gemini, which runs the library/profile/ranking tools for you.
 
 Run from the repo root:
-  python main.py            interactive assistant (needs GEMINI_API)
-  python main.py --report   one-shot ranked report from the saved preferences, no LLM
-  python main.py --history  print the log of past turns and exit
+  python main.py              interactive assistant (needs GEMINI_API); each run is a new session
+  python main.py --report     one-shot ranked report from the saved preferences, no LLM
+  python main.py --sessions   list logged sessions and exit
+  python main.py --open N     print session N in full and exit
 """
 
 import argparse
@@ -11,57 +12,69 @@ from typing import Any, cast
 
 from src import config, storage, tools
 from src.ai_agent import Assistant
-from src.history import Turn, load_turns, new_session_id
+from src.history import Turn, list_sessions, load_session
 
 HELP = """Ask for anything, e.g.:
   recommend me something new
   I want something like Hollow Knight and Celeste, but no pixel graphics
   always avoid horror games from now on
   refresh my steam library
-  what did you recommend me last time, and how does it compare to now?
-Commands: /history [n]   /show <n>   /help   /quit"""
+  compare this with what you recommended in my last session
+  start a new session
+Commands:
+  /new         start a new session (fresh log, the model forgets this conversation)
+  /history     this session's turns          /sessions   every logged session
+  /open <n>    print session n in full       /help  /quit"""
 
 
 def tool_summary(turn: Turn) -> list[str]:
-    """One line per tool call; recommendation calls list their top picks."""
+    """One line per tool call; recommendation calls list their top picks and backlog."""
     lines: list[str] = []
     for call in turn["tool_calls"]:
         args = ", ".join(f"{key}={value!r}" for key, value in call["args"].items())
         lines.append(f"    {call['name']}({args})" + (f"  ERROR {call['error']}" if "error" in call else ""))
         result = call["result"]
-        if isinstance(result, dict) and isinstance(result.get("recommendations"), list):
-            picks = [f"{pick['name']} ({pick['score']})" for pick in result["recommendations"][:5]]
-            lines.append(f"      top: {'; '.join(picks)}")
+        if not isinstance(result, dict):
+            continue
+        for key, label in (("recommendations", "top"), ("backlog", "backlog")):
+            picks = cast(list[dict[str, Any]], result.get(key) or [])
+            if picks:
+                lines.append(f"      {label}: {'; '.join(f'{pick["name"]} ({pick["score"]})' for pick in picks[:5])}")
     return lines
 
 
-def print_history(count: int) -> None:
-    turns = load_turns()
-    if not turns:
-        print(f"No history yet ({config.HISTORY_PATH})")
-        return
-    start = max(len(turns) - count, 0)
-    for index in range(start, len(turns)):
-        turn = turns[index]
-        print(f"\n[{index + 1}] {turn['timestamp']}  {turn['prompt']}")
+def print_turns(turns: list[Turn], full: bool) -> None:
+    for number, turn in enumerate(turns, start=1):
+        print(f"\n[{number}] {turn['timestamp']}\n> {turn['prompt']}")
         print("\n".join(tool_summary(turn)))
-    print("\n/show <n> prints a turn's full reply")
+        if full:
+            print(f"\n{turn['reply']}")
 
 
-def show_turn(number: int) -> None:
-    turns = load_turns()
-    if not 1 <= number <= len(turns):
-        print(f"No turn {number} (log has {len(turns)})")
+def print_sessions() -> None:
+    sessions = list_sessions()
+    if not sessions:
+        print(f"No sessions logged yet ({config.SESSIONS_DIR})")
         return
-    turn = turns[number - 1]
-    print(f"\n[{number}] {turn['timestamp']}  session {turn['session']}\n> {turn['prompt']}")
-    print("\n".join(tool_summary(turn)))
-    print(f"\n{turn['reply']}")
+    for number, summary in enumerate(sessions, start=1):
+        print(f"[{number}] {summary['session']}  {summary['turns']} turns  > {summary['first_prompt'][:70]}")
+    print("\n/open <n> prints a session in full")
+
+
+def open_session(number: int) -> None:
+    sessions = list_sessions()
+    if not 1 <= number <= len(sessions):
+        print(f"No session {number} ({len(sessions)} logged)")
+        return
+    session = sessions[number - 1]["session"]
+    print(f"=== Session {session} ===")
+    print_turns(load_session(session), full=True)
 
 
 def chat() -> None:
-    assistant = Assistant(new_session_id())
+    assistant = Assistant()
     print(HELP)
+    print(f"\nSession {assistant.session}")
     while True:
         try:
             prompt = input("\n> ").strip()
@@ -75,15 +88,27 @@ def chat() -> None:
             return
         if command == "/help":
             print(HELP)
+        elif command == "/new":
+            assistant.new_session()
+            print(f"New session {assistant.session}")
         elif command == "/history":
-            print_history(int(arg) if arg.isdigit() else 10)
-        elif command == "/show" and arg.isdigit():
-            show_turn(int(arg))
+            turns = load_session(assistant.session)
+            if turns:
+                print_turns(turns, full=False)
+            else:
+                print("Nothing in this session yet")
+        elif command == "/sessions":
+            print_sessions()
+        elif command == "/open" and arg.isdigit():
+            open_session(int(arg))
         else:
+            session = assistant.session
             try:
                 print(f"\n{assistant.send(prompt)}")
             except KeyboardInterrupt:
                 print("\n(interrupted)")
+            if assistant.session != session:
+                print(f"\nNew session {assistant.session}")
 
 
 def report() -> None:
@@ -106,12 +131,15 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--report", action="store_true", help="print a ranked report without the assistant")
-    mode.add_argument("--history", type=int, nargs="?", const=20, metavar="N", help="print the last N logged turns")
+    mode.add_argument("--sessions", action="store_true", help="list logged sessions")
+    mode.add_argument("--open", type=int, metavar="N", help="print logged session N in full")
     args = parser.parse_args()
 
     if args.report:
         report()
-    elif args.history is not None:
-        print_history(args.history)
+    elif args.sessions:
+        print_sessions()
+    elif args.open is not None:
+        open_session(args.open)
     else:
         chat()
