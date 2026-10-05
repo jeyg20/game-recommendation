@@ -17,6 +17,7 @@ from src.steamspy import (
     get_top_100_games_two_weeks,
 )
 from src.storage import append_jsonl, read_json, read_jsonl, write_json
+from src.ui import status
 
 
 class CorpusRecord(TypedDict):
@@ -128,47 +129,47 @@ def build_steam_collection(fetch_pages: bool | None = None) -> DfTable:
 
     if STEAM_BACKGROUND_CORPUS.is_file():
         corpus = load_cache_status(STEAM_BACKGROUND_CORPUS)
-        print(f"Loaded {len(corpus)} cached records from {STEAM_BACKGROUND_CORPUS}")
+        status.say(f"Loaded {len(corpus)} cached records from {STEAM_BACKGROUND_CORPUS}")
     else:
-        print(f"No cache at {STEAM_BACKGROUND_CORPUS}, starting fresh")
+        status.say(f"No cache at {STEAM_BACKGROUND_CORPUS}, starting fresh")
 
     if fetch_pages is None:
         fetch_pages = input("Do you want to fetch the pages from steamspy: (yes/no)").lower().strip() == "yes"
 
     if fetch_pages:
-        print("Fetching `all` pages 0, 2, 4, 6 (1 req/60s, ~3 min)...")
+        status.say("Fetching `all` pages 0, 2, 4, 6 (1 req/60s, ~3 min)...")
         for i in range(0, 7, 2):
             current_page = get_games_by_page(i)
 
             if current_page is not None:
-                print(f"Adding {len(current_page)} games of page {i} to corpus...")
+                status.say(f"Adding {len(current_page)} games of page {i} to corpus...")
                 steam_games_collection |= current_page
             else:
-                print(f"Page {i} failed, skipping")
+                status.say(f"Page {i} failed, skipping")
 
             if i != 6:
-                print("Waiting 60s for the `all` rate limit...")
+                status.update("waiting 60s for the SteamSpy `all` rate limit")
                 time.sleep(60)
 
         top_100_forever = get_top_100_games_forever()
         top_100_last_two_weeks = get_top_100_games_two_weeks()
 
         if top_100_forever is not None:
-            print("Adding top 100 games forever to corpus...")
+            status.say("Adding top 100 games forever to corpus...")
             steam_games_collection |= top_100_forever
         else:
-            print("Top 100 forever failed, skipping")
+            status.say("Top 100 forever failed, skipping")
 
         if top_100_last_two_weeks is not None:
-            print("Adding top 100 games last two weeks to corpus...")
+            status.say("Adding top 100 games last two weeks to corpus...")
             steam_games_collection |= top_100_last_two_weeks
         else:
-            print("Top 100 last two weeks failed, skipping")
+            status.say("Top 100 last two weeks failed, skipping")
 
     # pool order first (most-owned games first), then cached appids so due `failed` records get retried
     candidates = dict.fromkeys([*(game["appid"] for game in steam_games_collection.values()), *corpus])
     to_fetch = [appid for appid in candidates if needs_fetch(appid, corpus)]
-    print(
+    status.say(
         f"Pool: {len(steam_games_collection)} games from SteamSpy, {len(corpus)} cached, "
         f"{len(to_fetch)} to fetch (~{len(to_fetch) // 60} min at 1 req/s)"
     )
@@ -195,10 +196,10 @@ def build_steam_collection(fetch_pages: bool | None = None) -> DfTable:
 
         corpus[game_id] = game_corpus
         append_jsonl(STEAM_BACKGROUND_CORPUS, game_corpus)
-        print(f"[{n}/{len(to_fetch)}] appid {game_id}: {game_corpus['status']} ({len(game_corpus['tags'])} tags)")
+        status.update(f"fetching corpus tags (~{(len(to_fetch) - n) // 60} min left)", n, len(to_fetch))
         time.sleep(1)
 
-    print(f"Done. Corpus has {len(corpus)} records.")
+    status.say(f"Done. Corpus has {len(corpus)} records.")
 
     df_table = build_df_table(corpus)
 
@@ -349,7 +350,9 @@ def test_func() -> None:
 
 
 if __name__ == "__main__":
-    build_steam_collection()
+    fetch = input("Do you want to fetch the pages from steamspy: (yes/no)").lower().strip() == "yes"
+    with status.running("building the tag corpus"):
+        build_steam_collection(fetch_pages=fetch)
     # cache_data = load_cache_status(STEAM_BACKGROUND_CORPUS)
     # items_list = list(cache_data.items())
     #

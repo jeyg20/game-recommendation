@@ -4,6 +4,8 @@ import asyncio
 
 from howlongtobeatpy import HowLongToBeat, HowLongToBeatEntry
 
+from src.ui import status, style
+
 
 async def get_game_hltb(game_name: str) -> HowLongToBeatEntry | None:
     """Search HLTB and return the result most similar to `game_name`, or None if nothing matched or the search failed."""
@@ -14,7 +16,7 @@ async def get_game_hltb(game_name: str) -> HowLongToBeatEntry | None:
             best_element = max(results_list, key=lambda element: element.similarity)
             return best_element
     except Exception as e:
-        print(f"HLTB search failed for {game_name!r}: {e}")
+        status.say(style(f"  ! HLTB search failed for {game_name!r}: {e}", "yellow"))
 
 
 async def main() -> None:

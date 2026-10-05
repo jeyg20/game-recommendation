@@ -6,17 +6,24 @@ against a taste profile built from your own playtime.
 ## Usage
 
 ```sh
+uv sync                     # once: installs the deps and the `gamer-guide` command into .venv
 python -m src.tag_profile   # once: build the Steam-wide tag corpus (asks before paging SteamSpy, ~1h)
-python main.py              # chat with the assistant
-python main.py --report     # one-shot ranked report (saved preferences applied), no LLM
-python main.py --sessions   # list logged chat sessions
-python main.py --open 3     # print session 3 in full
+
+uv run gamer-guide              # chat with the assistant
+uv run gamer-guide --report     # one-shot ranked report (saved preferences applied), no LLM
+uv run gamer-guide --sessions   # list logged chat sessions
+uv run gamer-guide --open 3     # print session 3 in full
 ```
 
-In the chat, Enter sends; pasted multi-line text stays a single prompt, and Alt+Enter adds a line break.
+Paths are anchored to the repo, so it runs from any directory: `uv run --project ~/dev/gamer_guide gamer-guide`,
+or link `.venv/bin/gamer-guide` into `~/.local/bin`. `python main.py` still works.
 
 Needs `STEAM_API_KEY`, `STEAM_ID` and `GEMINI_API` in `.env` (`--report` works without `GEMINI_API`).
-Run from the repo root.
+
+**In the chat:** Enter sends; pasted multi-line text stays one prompt; Alt+Enter adds a line break; Tab completes
+`/commands` and Steam tag names. The bottom bar shows the session and what has been noted for the next
+recommendation. Picks are shown as tables straight from the ranking (fit bar, rating or hours played, matched tags);
+Gemini adds a short commentary underneath. Colors turn off when output is piped or `NO_COLOR` is set.
 
 ## Assistant
 

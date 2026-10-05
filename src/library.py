@@ -7,6 +7,7 @@ from typing import TypedDict
 from src import config, hltb, steam_api, steamspy, storage
 from src.steam_api import OwnedGame
 from src.tag_profile import is_excluded, split_genres
+from src.ui import status
 
 
 class LibraryGame(TypedDict):
@@ -23,13 +24,12 @@ class LibraryGame(TypedDict):
 
 def fetch_owned_games() -> list[OwnedGame]:
     """The account's owned games from the Steam Web API."""
-    print("retriving steam user games")
+    status.update("fetching your Steam library")
     owned_games = steam_api.get_owned_games(config.STEAM_ID, config.STEAM_API_KEY)
     if owned_games is None:
         raise RuntimeError("GetOwnedGames request failed (check STEAM_API_KEY / STEAM_ID)")
     if "games" not in owned_games["response"]:
         raise RuntimeError("Steam returned no games: set the profile's Game details to Public")
-    print("games retrieved")
     return owned_games["response"]["games"]
 
 
@@ -73,8 +73,10 @@ def to_library(player_games: list[OwnedGame]) -> dict[int, LibraryGame]:
 
 def add_steamspy_data(games: dict[int, LibraryGame]) -> dict[int, LibraryGame]:
     """Fill genres and tags from SteamSpy; drops games SteamSpy doesn't know and non-games (`is_excluded`)."""
-    for appid in list(games.keys()):
+    appids = list(games.keys())
+    for n, appid in enumerate(appids, start=1):
         entry = games[appid]
+        status.update(f"fetching SteamSpy tags: {entry['name']}", n, len(appids))
         steamspy_data = steamspy.get_game_details(entry["appid"])
 
         if steamspy_data is None or is_excluded(steamspy_data["genre"], steamspy_data["tags"]):
@@ -89,8 +91,8 @@ def add_steamspy_data(games: dict[int, LibraryGame]) -> dict[int, LibraryGame]:
 
 async def add_hltb_data(games: dict[int, LibraryGame]) -> dict[int, LibraryGame]:
     """Fill main story hours and review score from the best HLTB name match (None when there's no match)."""
-    print("Retriving How long to beat data of the player Owned games")
-    for entry in games.values():
+    for n, entry in enumerate(games.values(), start=1):
+        status.update(f"fetching HowLongToBeat: {entry['name']}", n, len(games))
         hltb_result = await hltb.get_game_hltb(entry["name"])
         entry["main_story_hours"] = getattr(hltb_result, "main_story", None)
         entry["review_score"] = getattr(hltb_result, "review_score", None)

@@ -17,6 +17,7 @@ from src.tag_profile import (
     norm,
     tag_vector,
 )
+from src.ui import status, style
 
 TAG_POOL_MAX_AGE_DAYS = 1  # SteamSpy refreshes once a day server-side
 MIN_REVIEWS = 500  # shovelware floor: positive + negative
@@ -44,7 +45,7 @@ def fetch_tag_pools(tags: list[str]) -> dict[str, dict[str, GameSummary]]:
         cache = cast(dict[str, TagPoolCache], read_json(TAG_POOLS_PATH))
 
     pools: dict[str, dict[str, GameSummary]] = {}
-    for tag in tags:
+    for n, tag in enumerate(tags, start=1):
         cached = cache.get(tag)
         if (
             cached is not None
@@ -53,14 +54,14 @@ def fetch_tag_pools(tags: list[str]) -> dict[str, dict[str, GameSummary]]:
             pools[tag] = cached["games"]
             continue
 
-        print(f"Fetching SteamSpy tag pool {tag!r}")
+        status.update(f"fetching games tagged {tag!r}", n, len(tags))
         games = get_games_by_tag(tag)
         time.sleep(1)
         if games is None:
-            print(f"Tag pool {tag!r} failed, skipping")
+            status.say(style(f"  ! SteamSpy tag pool {tag!r} failed, skipping it", "yellow"))
             continue
         if not games:
-            print(f"Tag pool {tag!r} is empty (tag string not in SteamSpy's vocabulary?)")
+            status.say(style(f"  ! tag pool {tag!r} is empty (not in SteamSpy's vocabulary?)", "yellow"))
         pools[tag] = games
         cache[tag] = {"fetched_at": date.today().isoformat(), "games": games}
         write_json(TAG_POOLS_PATH, cache)
@@ -99,10 +100,8 @@ def enrich_tags(appids: list[int]) -> dict[int, CorpusRecord]:
     corpus = load_cache_status(STEAM_BACKGROUND_CORPUS) if STEAM_BACKGROUND_CORPUS.is_file() else {}
     # a cached `excluded` game stays out without a refetch; a `failed` one gets another try
     missing = [appid for appid in appids if appid not in corpus or corpus[appid]["status"] == "failed"]
-    if missing:
-        print(f"Fetching tags for {len(missing)} finalists not in the corpus (~{len(missing)}s at 1 req/s)")
-
     for n, appid in enumerate(missing, start=1):
+        status.update(f"fetching tags for new candidates (~{len(missing) - n}s left)", n, len(missing))
         details = get_game_details(appid)
         record: CorpusRecord = {
             "appid": appid,
@@ -118,7 +117,6 @@ def enrich_tags(appids: list[int]) -> dict[int, CorpusRecord]:
             record["status"] = "excluded" if excluded else "ok"
         corpus[appid] = record
         append_jsonl(STEAM_BACKGROUND_CORPUS, record)
-        print(f"[{n}/{len(missing)}] appid {appid}: {record['status']}")
         time.sleep(1)
 
     return {appid: corpus[appid] for appid in appids if appid in corpus and corpus[appid]["status"] == "ok"}
