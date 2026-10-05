@@ -8,7 +8,12 @@ Run from the repo root:
 """
 
 import argparse
+import sys
+from collections.abc import Callable
 from typing import Any, cast
+
+from prompt_toolkit import PromptSession
+from prompt_toolkit.key_binding import KeyBindings, KeyPressEvent
 
 from src import config, storage, tools
 from src.ai_agent import Assistant
@@ -21,6 +26,7 @@ HELP = """Ask for anything, e.g.:
   refresh my steam library
   compare this with what you recommended in my last session
   start a new session
+Enter sends. Pasted text stays one prompt, line breaks included; Alt+Enter adds a line break by hand.
 Commands:
   /new         start a new session (fresh log, the model forgets this conversation)
   /history     this session's turns          /sessions   every logged session
@@ -71,13 +77,37 @@ def open_session(number: int) -> None:
     print_turns(load_session(session), full=True)
 
 
+def prompt_reader() -> Callable[[], str]:
+    """Reads one prompt. In a terminal, prompt_toolkit's bracketed paste keeps a pasted block (newlines and all) in
+    one prompt that Enter sends; plain input() would send every pasted line as its own prompt.
+    Piped stdin (scripts, tests) falls back to input(): one line per prompt.
+    """
+    if not sys.stdin.isatty():
+        return lambda: input("\n> ")
+
+    bindings = KeyBindings()
+
+    @bindings.add("escape", "enter")  # Alt+Enter
+    def _(event: KeyPressEvent) -> None:
+        event.current_buffer.insert_text("\n")
+
+    session: PromptSession[str] = PromptSession(key_bindings=bindings, prompt_continuation="  ")
+
+    def read() -> str:
+        print()
+        return session.prompt("> ")
+
+    return read
+
+
 def chat() -> None:
     assistant = Assistant()
+    read_prompt = prompt_reader()
     print(HELP)
     print(f"\nSession {assistant.session}")
     while True:
         try:
-            prompt = input("\n> ").strip()
+            prompt = read_prompt().strip()
         except EOFError, KeyboardInterrupt:
             print()
             return

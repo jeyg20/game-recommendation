@@ -13,6 +13,8 @@ python main.py --sessions   # list logged chat sessions
 python main.py --open 3     # print session 3 in full
 ```
 
+In the chat, Enter sends; pasted multi-line text stays a single prompt, and Alt+Enter adds a line break.
+
 Needs `STEAM_API_KEY`, `STEAM_ID` and `GEMINI_API` in `.env` (`--report` works without `GEMINI_API`).
 Run from the repo root.
 
