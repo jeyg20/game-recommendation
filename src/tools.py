@@ -33,6 +33,19 @@ class ReferenceGame(TypedDict):
     tags: dict[str, int]
 
 
+class RequestDraft(TypedDict):
+    """What the player has said they want this session, gathered over several messages before asking for picks."""
+
+    like_games: list[str]
+    boost_tags: list[str]
+    avoid_tags: list[str]
+    notes: list[str]  # anything the ranking can't use directly ("short sessions", "to play with my partner")
+
+
+def empty_draft() -> RequestDraft:
+    return {"like_games": [], "boost_tags": [], "avoid_tags": [], "notes": []}
+
+
 class State(TypedDict):
     player_games: list[OwnedGame] | None
     games: dict[int, LibraryGame] | None
@@ -40,6 +53,7 @@ class State(TypedDict):
     profile: TagVector | None
     session: str  # set by the Assistant: the session being logged
     new_session_requested: bool  # set by start_new_session, acted on by the Assistant once the turn ends
+    draft: RequestDraft  # reset with every new session
 
 
 state: State = {
@@ -49,6 +63,7 @@ state: State = {
     "profile": None,
     "session": "",
     "new_session_requested": False,
+    "draft": empty_draft(),
 }
 reference_cache: dict[str, ReferenceGame | None] = {}  # lowercased name -> best match
 
@@ -162,6 +177,8 @@ def recommend_games(
 ) -> dict[str, object]:
     """Rank games the player doesn't own against their taste profile, optionally steered for this request.
 
+    Everything recorded with note_request this session is applied automatically, so only pass what is new.
+
     Candidates come from SteamSpy (popular, well-reviewed games). Each result has a cosine score in [0, 1] and the
     tags it shares with the profile, which is the reason it was picked. New tag pools and game tags are fetched at
     ~1 request/second, so a first run with new tags can take a minute or two.
@@ -179,11 +196,13 @@ def recommend_games(
         load_preferences() if use_saved_preferences else {"like_games": [], "boost_tags": [], "avoid_tags": []}
     )
 
-    boost, unknown_boost = canonical_tags(merge(saved["boost_tags"], boost_tags), df_table)
-    avoid, unknown_avoid = canonical_tags(merge(saved["avoid_tags"], avoid_tags), df_table)
+    draft = state["draft"]
+
+    boost, unknown_boost = canonical_tags(merge(merge(saved["boost_tags"], draft["boost_tags"]), boost_tags), df_table)
+    avoid, unknown_avoid = canonical_tags(merge(merge(saved["avoid_tags"], draft["avoid_tags"]), avoid_tags), df_table)
     references: list[ReferenceGame] = []
     not_found: list[str] = []
-    for name in merge(saved["like_games"], like_games):
+    for name in merge(merge(saved["like_games"], draft["like_games"]), like_games):
         found = find_game(name)
         if found is None:
             not_found.append(name)
@@ -206,6 +225,7 @@ def recommend_games(
             "boost_tags": boost,
             "avoid_tags": avoid,
             "from_saved_preferences": use_saved_preferences,
+            "player_notes": draft["notes"],
         },
         "steered_top_tags": rounded(taste, top_tags(taste, 10)),
         "candidate_pools": pool_tags,
@@ -380,6 +400,43 @@ def list_past_sessions(limit: int = 10) -> dict[str, object]:
     return {"current_session": state["session"], "sessions": sessions}
 
 
+def note_request(
+    like_games: list[str] | None = None,
+    boost_tags: list[str] | None = None,
+    avoid_tags: list[str] | None = None,
+    notes: list[str] | None = None,
+    remove: list[str] | None = None,
+) -> dict[str, object]:
+    """Record what the player wants for their next recommendation, without recommending yet.
+
+    Use while the player is still describing what they want. Everything noted is applied automatically by
+    recommend_games for the rest of this session. Tags are checked right away so bad ones can be fixed early.
+
+    Args:
+      like_games: Game names they want something like.
+      boost_tags: Steam user tags they want more of.
+      avoid_tags: Steam user tags they want to stay away from.
+      notes: Anything else they said that matters for the picks, in a few words each.
+      remove: Game names, tags or notes they took back.
+    """
+    draft = state["draft"]
+    result: dict[str, object] = {}
+    if boost_tags or avoid_tags:
+        _, _, df_table, _ = ensure_loaded()
+        boost, unknown_boost = canonical_tags(boost_tags, df_table)
+        avoid, unknown_avoid = canonical_tags(avoid_tags, df_table)
+        draft["boost_tags"] = merge(draft["boost_tags"], boost)
+        draft["avoid_tags"] = merge(draft["avoid_tags"], avoid)
+        if unknown_boost or unknown_avoid:
+            result["unknown_tags_not_noted"] = unknown_boost | unknown_avoid
+    draft["like_games"] = merge(draft["like_games"], like_games)
+    draft["notes"] = merge(draft["notes"], notes)
+    for key in ("like_games", "boost_tags", "avoid_tags", "notes"):
+        draft[key] = without(draft[key], remove)
+    result["request_so_far"] = draft
+    return result
+
+
 def start_new_session() -> dict[str, object]:
     """Close this session's log and start a fresh one, with no memory of this conversation.
 
@@ -397,6 +454,7 @@ TOOLS = [
     update_preferences,
     refresh_library,
     update_background_corpus,
+    note_request,
     get_recommendation_history,
     list_past_sessions,
     start_new_session,

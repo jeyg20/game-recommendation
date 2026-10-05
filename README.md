@@ -26,6 +26,7 @@ Gemini (`src/ai_agent.py`) reads your prompt and calls the tools in `src/tools.p
 | --- | --- |
 | `get_taste_profile` | Strongest profile tags, most-played games, saved preferences |
 | `recommend_games` | Ranks unowned games, optionally steered: `like_games` ("more like X"), `boost_tags`, `avoid_tags` |
+| `note_request` | Records what you want (games, tags, notes) over several messages, without recommending yet |
 | `look_up_game` | One game's tags, whether you own it, and how well it fits your profile |
 | `update_preferences` | Saves steers that apply to every future request (`data/preferences.json`) |
 | `refresh_library` | Refetches the Steam library, tags and HLTB times; reports new games and new playtime |
@@ -37,6 +38,10 @@ Gemini (`src/ai_agent.py`) reads your prompt and calls the tools in `src/tools.p
 Steering: the library profile is scaled to unit length, the reference games' tag vectors are added on top (sharing a
 weight of 1.0 between them), boosted tags get half the strongest tag's weight, and avoided tags are removed from the
 profile. Any candidate with an avoided tag among its 5 strongest is dropped.
+
+**When it recommends.** Only when you ask for picks ("recommend", "what should I play", "that's it") or send a
+complete request in one message. While you're still describing what you want, it notes each detail with
+`note_request`, confirms it, and asks if there's more; everything noted is applied when it does recommend.
 
 **Sessions.** Each `python main.py` run is a session with its own log, `data/logs/sessions/<start time>.jsonl`.
 A turn records the prompt, each tool call with its arguments and full result, and the reply. `/new` (or asking for
