@@ -17,7 +17,7 @@ from contextlib import contextmanager
 INTERACTIVE = sys.stdout.isatty()
 COLOR = INTERACTIVE and "NO_COLOR" not in os.environ
 
-CODES = {"bold": "1", "dim": "2", "italic": "3", "red": "31", "green": "32", "yellow": "33", "cyan": "36", "grey": "90"}
+CODES = {"bold": "1", "dim": "2", "italic": "3", "red": "31", "green": "32", "yellow": "33", "blue": "34", "cyan": "36", "grey": "37"}
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 
@@ -127,7 +127,7 @@ def bar(score: float) -> str:
     eighths = round(max(0.0, min(score, 1.0)) * BAR_CELLS * 8)
     full, part = divmod(eighths, 8)
     blocks = "█" * full + (PARTIAL_BLOCKS[part - 1] if part else "")
-    color = "green" if score >= 0.6 else "yellow" if score >= 0.4 else "grey"
+    color = "green" if score >= 0.6 else "yellow" if score >= 0.4 else "blue"
     return style(blocks.ljust(BAR_CELLS), color) + f" {score:.2f}"
 
 

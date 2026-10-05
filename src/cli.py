@@ -18,6 +18,7 @@ from prompt_toolkit.key_binding import KeyBindings, KeyPressEvent
 from src import config, storage, tools, ui
 from src.ai_agent import TOOL_LABELS, Assistant
 from src.history import ToolCall, Turn, list_sessions, load_session
+from src.tag_profile import load_df_table
 from src.ui import style
 
 COMMANDS = {
@@ -118,9 +119,12 @@ class PromptCompleter(Completer):
 
     def tag_names(self) -> list[str]:
         if self.tags is None:
+            # Only the df table: ensure_loaded() can reach asyncio.run, which fails inside prompt_toolkit's event loop
             try:
-                self.tags = sorted(tools.ensure_loaded()[2]["df"])
-            except Exception:  # no corpus yet: complete commands only
+                if tools.state["df_table"] is None:
+                    tools.state["df_table"] = load_df_table()
+                self.tags = sorted(tools.state["df_table"]["df"])
+            except RuntimeError:  # no corpus yet: complete commands only
                 self.tags = []
         return self.tags
 
