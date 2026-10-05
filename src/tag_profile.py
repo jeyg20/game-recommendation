@@ -227,12 +227,6 @@ def build_steam_collection() -> None:
 # TODO: cache the profile's norm, it doesn't change across candidates
 # TODO: candidate vectors must use the SAME df table, or the axes don't line up
 
-# ---------------------------------------------------------------------
-# Blocker
-# ---------------------------------------------------------------------
-# TODO: normalize appid int/str at the cache boundary before any of this —
-#       subtracting owned appids from candidates fails silently otherwise
-
 
 def test_func() -> None:
     """Scratch check of the `all` page shape."""
