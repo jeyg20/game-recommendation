@@ -23,7 +23,7 @@ TAG_POOL_MAX_AGE_DAYS = 1  # SteamSpy refreshes once a day server-side
 MIN_REVIEWS = 500  # shovelware floor: positive + negative
 MIN_POSITIVE_RATIO = 0.75
 FINALISTS = 100
-MIN_STRICT_FINALISTS = 20  # fewer games than this carry every required tag -> accept any of them instead
+MIN_STRICT_RESULTS = 10  # fewer picks than this carry every required tag -> accept any one of them instead
 
 
 class TagPoolCache(TypedDict):
@@ -61,8 +61,9 @@ def fetch_tag_pools(tags: list[str]) -> dict[str, dict[str, GameSummary]]:
         if games is None:
             status.say(style(f"  ! SteamSpy tag pool {tag!r} failed, skipping it", "yellow"))
             continue
-        if not games:
+        if not games:  # not cached: an empty listing is a miss, and caching it would repeat it all day
             status.say(style(f"  ! tag pool {tag!r} is empty (not in SteamSpy's vocabulary?)", "yellow"))
+            continue
         pools[tag] = games
         cache[tag] = {"fetched_at": date.today().isoformat(), "games": games}
         write_json(TAG_POOLS_PATH, cache)
@@ -162,6 +163,13 @@ def has_required_tags(tags: dict[str, int], required_tags: list[str], relaxed: b
     return any(present) if relaxed else all(present)
 
 
+def fits_tags(tags: dict[str, int], required_tags: list[str], avoid_tags: list[str], relaxed: bool) -> bool:
+    """The required/avoided tag rules, shared by candidates and the backlog."""
+    if avoid_tags and has_avoided_tag(tags, avoid_tags):
+        return False
+    return not required_tags or has_required_tags(tags, required_tags, relaxed)
+
+
 def has_avoided_tag(tags: dict[str, int], avoid_tags: list[str]) -> bool:
     avoided = {tag.lower() for tag in avoid_tags}
     strongest = sorted(tags, key=tags.__getitem__, reverse=True)[:AVOID_TOP_TAGS]
@@ -172,7 +180,7 @@ class RecommendResult(TypedDict):
     recommendations: list[Recommendation]  # best first
     pool_tags: list[str]  # the tag pools candidates were drawn from
     requirement_relaxed: bool  # too few games had every required tag, so any one of them was enough
-    requirement_unenforced: list[str]  # required tags whose pool failed to fetch
+    requirement_unenforced: list[str]  # required tags whose pool failed to fetch or came back empty
 
 
 def recommend(
@@ -185,45 +193,47 @@ def recommend(
 ) -> RecommendResult:
     """Steps 5-7: retrieve pools for the top tags, narrow to finalists, score them.
 
-    `required_tags` get their pools fetched first, and every finalist must be in all of them (any of them, when
-    fewer than MIN_STRICT_FINALISTS are). Without this a specific ask like "shooters" loses to whatever the
-    library profile is heavy in: finalists rank by pool hits, and the profile's own tags win those.
-    `excluded_appids` never come back (owned games, the reference games of a "more like X" request).
+    `required_tags` get their pools fetched first; every pick must be in all of them and carry each among its
+    strongest tags (any one of them, when fewer than MIN_STRICT_RESULTS picks do). Without this a specific ask like
+    "shooters" loses to whatever the library profile is heavy in: finalists rank by pool hits, and the profile's own
+    tags win those. `excluded_appids` never come back (owned games, the reference games of a "more like X" request).
     """
     required = required_tags or []
     pool_tags = [*required, *(tag for tag in top if tag not in required)][: max(len(top), len(required) + 4)]
     pools = fetch_tag_pools(pool_tags)
-
-    required_pools = [{int(game["appid"]) for game in pools[tag].values()} for tag in required if tag in pools]
-    relaxed = False
-    if required_pools:
-        finalists = pick_finalists(pools, excluded_appids, set.intersection(*required_pools))
-        if len(finalists) < MIN_STRICT_FINALISTS and len(required_pools) > 1:
-            finalists = pick_finalists(pools, excluded_appids, set.union(*required_pools))
-            relaxed = True
-    else:
-        finalists = pick_finalists(pools, excluded_appids)
-    records = enrich_tags([int(game["appid"]) for game in finalists])
+    enforced = [tag for tag in required if tag in pools]  # a failed or empty pool can't filter anything
     profile_norm = norm(profile)
 
-    recommendations: list[Recommendation] = []
-    for game in finalists:
-        record = records.get(int(game["appid"]))
-        if record is None or (avoid_tags and has_avoided_tag(record["tags"], avoid_tags)):
-            continue
-        enforced = [tag for tag in required if tag in pools]
-        if enforced and not has_required_tags(record["tags"], enforced, relaxed):
-            continue
-        rec = score(int(game["appid"]), game["name"], record["tags"], profile, profile_norm, df_table)
-        rec["positive_ratio"] = positive_ratio(game)
-        recommendations.append(rec)
+    def ranked(allowed_appids: set[int] | None, relaxed: bool) -> list[Recommendation]:
+        finalists = pick_finalists(pools, excluded_appids, allowed_appids)
+        records = enrich_tags([int(game["appid"]) for game in finalists])
+        picks: list[Recommendation] = []
+        for game in finalists:
+            record = records.get(int(game["appid"]))
+            if record is None or not fits_tags(record["tags"], enforced, avoid_tags or [], relaxed):
+                continue
+            rec = score(int(game["appid"]), game["name"], record["tags"], profile, profile_norm, df_table)
+            rec["positive_ratio"] = positive_ratio(game)
+            picks.append(rec)
+        picks.sort(key=lambda rec: rec["score"], reverse=True)
+        return picks
 
-    recommendations.sort(key=lambda rec: rec["score"], reverse=True)
+    relaxed = False
+    if enforced:
+        required_pools = [{int(game["appid"]) for game in pools[tag].values()} for tag in enforced]
+        recommendations = ranked(set.intersection(*required_pools), relaxed=False)
+        # judged on the final picks, after the strongest-tags check, not on raw pool overlap
+        if len(recommendations) < MIN_STRICT_RESULTS and len(enforced) > 1:
+            recommendations = ranked(set.union(*required_pools), relaxed=True)
+            relaxed = True
+    else:
+        recommendations = ranked(None, relaxed=False)
+
     return {
         "recommendations": recommendations,
         "pool_tags": pool_tags,
         "requirement_relaxed": relaxed,
-        "requirement_unenforced": [tag for tag in required if tag not in pools],
+        "requirement_unenforced": [tag for tag in required if tag not in enforced],
     }
 
 

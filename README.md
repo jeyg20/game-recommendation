@@ -45,8 +45,10 @@ Gemini (`src/ai_agent.py`) reads your prompt and calls the tools in `src/tools.p
 Steering: the library profile is scaled to unit length and the reference games' tag vectors are added on top
 (sharing a weight of 1.0 between them). Boost tags are must-haves: their SteamSpy pools are always fetched, every
 finalist has to be in all of them and carry each one among its 10 strongest tags (any one of them, flagged as
-relaxed, when fewer than 20 games qualify), and they get the strongest tag's weight in the ranking. Avoided tags are
-removed from the profile, and any candidate with one among its 5 strongest is dropped.
+relaxed, when fewer than 10 picks qualify), and they get the strongest tag's weight in the ranking. Boost tags
+saved with `update_preferences` are standing tastes instead: they add weight but never filter. Avoided tags are
+removed from the profile, and any candidate with one among its 5 strongest is dropped. The backlog follows the same
+must-have and avoid rules.
 
 **When it recommends.** Only when you ask for picks ("recommend", "what should I play", "that's it") or send a
 complete request in one message. While you're still describing what you want, it notes each detail with

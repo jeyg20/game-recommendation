@@ -11,7 +11,7 @@ from src import library, steam_api, steamspy
 from src.history import list_sessions, load_session
 from src.library import LibraryGame
 from src.preferences import Preferences, load_preferences, merge, save_preferences, without
-from src.recommend import Recommendation, recommend, score, score_backlog
+from src.recommend import Recommendation, fits_tags, recommend, score, score_backlog
 from src.steam_api import OwnedGame
 from src.tag_profile import (
     DfTable,
@@ -199,7 +199,11 @@ def recommend_games(
 
     draft = state["draft"]
 
-    boost, unknown_boost = canonical_tags(merge(merge(saved["boost_tags"], draft["boost_tags"]), boost_tags), df_table)
+    # this request's boosts are must-haves; saved ones are standing tastes, so they only add weight
+    required, unknown_required = canonical_tags(merge(draft["boost_tags"], boost_tags), df_table)
+    soft_boost, unknown_soft = canonical_tags(saved["boost_tags"], df_table)
+    boost = merge(soft_boost, required)
+    unknown_boost = unknown_soft | unknown_required
     avoid, unknown_avoid = canonical_tags(merge(merge(saved["avoid_tags"], draft["avoid_tags"]), avoid_tags), df_table)
     references: list[ReferenceGame] = []
     not_found: list[str] = []
@@ -217,13 +221,14 @@ def recommend_games(
         else profile
     )
     excluded = {game["appid"] for game in player_games} | {ref["appid"] for ref in references}
-    ranked = recommend(taste, top_tags(taste, 8), excluded, df_table, avoid, required_tags=boost)
+    ranked = recommend(taste, top_tags(taste, 8), excluded, df_table, avoid, required_tags=required)
     recommendations = ranked["recommendations"]
 
     result: dict[str, object] = {
         "applied": {
             "like_games": [ref["name"] for ref in references],
-            "boost_tags": boost,
+            "boost_tags": required,
+            "saved_boost_tags": soft_boost,
             "avoid_tags": avoid,
             "from_saved_preferences": use_saved_preferences,
             "player_notes": draft["notes"],
@@ -241,11 +246,16 @@ def recommend_games(
     if unknown_boost or unknown_avoid:
         result["unknown_tags_ignored"] = unknown_boost | unknown_avoid
     if include_backlog:
-        backlog = [(g["appid"], g["name"], g["tags"] or {}) for g in games.values() if g["tags"] and is_backlog(g)]
-        ranked = score_backlog(backlog, taste, df_table)[:limit]
+        enforced = [tag for tag in required if tag not in ranked["requirement_unenforced"]]
+        backlog = [
+            (g["appid"], g["name"], g["tags"] or {})
+            for g in games.values()
+            if g["tags"] and is_backlog(g) and fits_tags(g["tags"], enforced, avoid, ranked["requirement_relaxed"])
+        ]
+        backlog_picks = score_backlog(backlog, taste, df_table)[:limit]
         result["backlog"] = [
             {**pick, "playtime_hours": round(games[rec["appid"]]["playtime_hours"], 1)}
-            for rec, pick in zip(ranked, compact(ranked, limit), strict=True)
+            for rec, pick in zip(backlog_picks, compact(backlog_picks, limit), strict=True)
         ]
     return result
 
@@ -286,7 +296,8 @@ def update_preferences(
 
     Args:
       add_like_games: Game names to always steer toward.
-      add_boost_tags: Steam user tags to always weigh more.
+      add_boost_tags: Steam user tags to always weigh more (a standing taste, not a filter: picks won't be
+        required to have them).
       add_avoid_tags: Steam user tags to always steer away from.
       remove: Game names or tags to remove from every saved list.
     """
