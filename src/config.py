@@ -19,3 +19,7 @@ HLTB_DATA_FILE_PATH = Path("data/raw/hltb_game_data_list.json")
 # Steam-wide tag corpus (tag_profile.py)
 STEAM_BACKGROUND_CORPUS = Path("data/corpus/steam_background_corpus.json")
 DF_TABLE_PATH = Path("data/corpus/df_table.json")
+
+# Recommendation stage (recommend.py)
+TAG_POOLS_PATH = Path("data/candidates/tag_pools.json")
+RECOMMENDATIONS_PATH = Path("data/output/recommendations.json")

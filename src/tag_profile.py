@@ -16,7 +16,7 @@ from src.steamspy import (
     get_top_100_games_forever,
     get_top_100_games_two_weeks,
 )
-from src.storage import append_jsonl, read_jsonl, write_json
+from src.storage import append_jsonl, read_json, read_jsonl, write_json
 
 
 class CorpusRecord(TypedDict):
@@ -203,29 +203,94 @@ def build_steam_collection() -> None:
     write_json(DF_TABLE_PATH, df_table)
 
 
+def load_df_table() -> DfTable:
+    """The saved df table, or build it from the corpus (and save it) if it hasn't been written yet."""
+    if DF_TABLE_PATH.is_file():
+        return cast(DfTable, read_json(DF_TABLE_PATH))
+    if not STEAM_BACKGROUND_CORPUS.is_file():
+        raise RuntimeError(f"No corpus at {STEAM_BACKGROUND_CORPUS}: run `python -m src.tag_profile` first")
+    df_table = build_df_table(load_cache_status(STEAM_BACKGROUND_CORPUS))
+    write_json(DF_TABLE_PATH, df_table)
+    return df_table
+
+
 # ---------------------------------------------------------------------
 # 3. Taste weight per owned game
 # ---------------------------------------------------------------------
-# TODO: completion = min(playtime_hours / main_story_hours, 1)   capped, no blowout
-# TODO: volume = 1 - exp(-playtime_hours / 40)                   saturating
-# TODO: weight = mean of the two
-# TODO: no main_story, or multiplayer/idle (HLTB denominator is junk there) -> volume only
-# TODO: later — negative weight for early abandonment instead of a positive floor
+VOLUME_SCALE_HOURS = 40
+# Games where HLTB's main story is meaningless (no story to finish): only playtime volume counts.
+OPEN_ENDED_TAGS = {"multiplayer", "massively multiplayer", "mmorpg", "pvp", "battle royale", "idler", "clicker"}
+OPEN_ENDED_TOP_TAGS = 5
+
+
+def is_open_ended(tags: dict[str, int]) -> bool:
+    """True when one of the game's top tags marks it as multiplayer/idle."""
+    top_tags = sorted(tags, key=tags.__getitem__, reverse=True)[:OPEN_ENDED_TOP_TAGS]
+    return any(tag.lower() in OPEN_ENDED_TAGS for tag in top_tags)
+
+
+def taste_weight(playtime_hours: float, main_story_hours: float | None, tags: dict[str, int]) -> float:
+    """How much an owned game says about the player's taste, in [0, 1].
+
+    completion = min(playtime / main_story, 1)   capped, no blowout
+    volume     = 1 - exp(-playtime / 40)         saturating
+    weight     = mean of the two, or volume only when there's no usable main story
+    """
+    volume = 1 - math.exp(-playtime_hours / VOLUME_SCALE_HOURS)
+    if not main_story_hours or is_open_ended(tags):
+        return volume
+    completion = min(playtime_hours / main_story_hours, 1)
+    return (completion + volume) / 2
+
 
 # ---------------------------------------------------------------------
 # 4. Profile vector
 # ---------------------------------------------------------------------
-# TODO: per game, normalize tag votes to proportions (share of that game's total votes)
-# TODO: profile[tag] += weight * share * idf
-# TODO: keep the whole dict — do NOT truncate to top-N, that dict is the vector
-# TODO: top-N is only for pulling the candidate pool, not for scoring
+type TagVector = dict[str, float]
+
+
+def tag_vector(tags: dict[str, int], df_table: DfTable) -> TagVector:
+    """A game's tags as vote shares scaled by idf. Tags missing from the corpus get the df=0 idf."""
+    total_votes = sum(tags.values())
+    if total_votes == 0:
+        return {}
+    unseen_idf = math.log(1 + df_table["n"]) + 1
+    return {tag: votes / total_votes * df_table["idf"].get(tag, unseen_idf) for tag, votes in tags.items()}
+
+
+def build_profile(games: list[tuple[float, dict[str, int]]], df_table: DfTable) -> TagVector:
+    """Sum of weight * tag_vector over (weight, tags) pairs. The whole dict is the vector: never truncate it."""
+    profile: Counter[str] = Counter()
+    for weight, tags in games:
+        if weight <= 0:
+            continue
+        for tag, value in tag_vector(tags, df_table).items():
+            profile[tag] += weight * value
+    return dict(profile)
+
+
+def top_tags(profile: TagVector, n: int) -> list[str]:
+    """The n strongest profile tags. Only for pulling the candidate pool, not for scoring."""
+    return sorted(profile, key=profile.__getitem__, reverse=True)[:n]
+
 
 # ---------------------------------------------------------------------
-# 5. Later — ranking
+# 5. Ranking
 # ---------------------------------------------------------------------
-# TODO: cosine(a, b) = dot / (|a| * |b|)
-# TODO: cache the profile's norm, it doesn't change across candidates
-# TODO: candidate vectors must use the SAME df table, or the axes don't line up
+def norm(vector: TagVector) -> float:
+    return math.sqrt(sum(value * value for value in vector.values()))
+
+
+def cosine(profile: TagVector, profile_norm: float, candidate: TagVector) -> float:
+    """dot / (|a| * |b|). The profile norm is passed in: it doesn't change across candidates.
+
+    Both vectors must come from the SAME df table, or the axes don't line up.
+    """
+    candidate_norm = norm(candidate)
+    if profile_norm == 0 or candidate_norm == 0:
+        return 0.0
+    dot = sum(value * profile.get(tag, 0.0) for tag, value in candidate.items())
+    return dot / (profile_norm * candidate_norm)
 
 
 def test_func() -> None:
