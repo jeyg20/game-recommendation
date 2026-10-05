@@ -23,3 +23,7 @@ DF_TABLE_PATH = Path("data/corpus/df_table.json")
 # Recommendation stage (recommend.py)
 TAG_POOLS_PATH = Path("data/candidates/tag_pools.json")
 RECOMMENDATIONS_PATH = Path("data/output/recommendations.json")
+
+# Assistant (ai_agent.py)
+PREFERENCES_PATH = Path("data/preferences.json")
+HISTORY_PATH = Path("data/logs/history.jsonl")

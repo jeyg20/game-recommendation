@@ -78,14 +78,14 @@ def passes_floor(game: GameSummary) -> bool:
     return game["positive"] + game["negative"] >= MIN_REVIEWS and positive_ratio(game) >= MIN_POSITIVE_RATIO
 
 
-def pick_finalists(pools: dict[str, dict[str, GameSummary]], owned_appids: set[int]) -> list[GameSummary]:
-    """Union the pools, drop owned games and shovelware, rank by how many pools each game hit. No requests."""
+def pick_finalists(pools: dict[str, dict[str, GameSummary]], excluded_appids: set[int]) -> list[GameSummary]:
+    """Union the pools, drop excluded games and shovelware, rank by how many pools each game hit. No requests."""
     hits: dict[int, int] = {}
     games: dict[int, GameSummary] = {}
     for pool in pools.values():
         for game in pool.values():
             appid = int(game["appid"])
-            if appid in owned_appids or not passes_floor(game):
+            if appid in excluded_appids or not passes_floor(game):
                 continue
             hits[appid] = hits.get(appid, 0) + 1
             games[appid] = game
@@ -143,17 +143,35 @@ def score(
     }
 
 
-def recommend(profile: TagVector, top: list[str], owned_appids: set[int], df_table: DfTable) -> list[Recommendation]:
-    """Steps 5-7: retrieve pools for the top tags, narrow to finalists, score them. Best first."""
+AVOID_TOP_TAGS = 5  # a candidate is dropped when an avoided tag is among its strongest tags
+
+
+def has_avoided_tag(tags: dict[str, int], avoid_tags: list[str]) -> bool:
+    avoided = {tag.lower() for tag in avoid_tags}
+    strongest = sorted(tags, key=tags.__getitem__, reverse=True)[:AVOID_TOP_TAGS]
+    return any(tag.lower() in avoided for tag in strongest)
+
+
+def recommend(
+    profile: TagVector,
+    top: list[str],
+    excluded_appids: set[int],
+    df_table: DfTable,
+    avoid_tags: list[str] | None = None,
+) -> list[Recommendation]:
+    """Steps 5-7: retrieve pools for the top tags, narrow to finalists, score them. Best first.
+
+    `excluded_appids` never come back (owned games, the reference games of a "more like X" request).
+    """
     pools = fetch_tag_pools(top)
-    finalists = pick_finalists(pools, owned_appids)
+    finalists = pick_finalists(pools, excluded_appids)
     records = enrich_tags([int(game["appid"]) for game in finalists])
     profile_norm = norm(profile)
 
     recommendations: list[Recommendation] = []
     for game in finalists:
         record = records.get(int(game["appid"]))
-        if record is None:
+        if record is None or (avoid_tags and has_avoided_tag(record["tags"], avoid_tags)):
             continue
         rec = score(int(game["appid"]), game["name"], record["tags"], profile, profile_norm, df_table)
         rec["positive_ratio"] = positive_ratio(game)

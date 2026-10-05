@@ -1,44 +1,82 @@
-"""Gemini client that explains the ranked recommendations in plain language."""
+"""Gemini chat assistant: reads the player's prompt, calls the tools in src/tools.py, answers from their results.
 
-import json
+Function calling is handled by hand (automatic calling disabled) so every call and result can be logged.
+"""
 
 from google import genai
+from google.genai import types
 
 from src import config
-from src.recommend import Recommendation
+from src.history import ToolCall, log_turn
+from src.tools import TOOLS
 
 MODEL = "gemini-3.1-flash-lite"
+MAX_TOOL_ROUNDS = 8  # model -> tools -> model round trips per prompt, guards against a call loop
 
-PROMPT = """You are a game recommendation assistant. A local ranking already picked the games below by comparing
-Steam user tags against a taste profile built from the player's own playtime. Do not re-rank or add games.
+SYSTEM_PROMPT = """You are a game recommendation assistant for one Steam player. You have tools that read their
+Steam library, build a taste profile from their playtime, rank games against it, and keep a log of past requests.
 
-For each recommended game, write one or two sentences on why it fits this player, grounded in the matched tags and
-the games they played most. Then do the same for the backlog: games they already own but never played, best fit first.
-Keep it concise and skip games that look like a weak fit (low score).
+- Recommend only games returned by your tools; never invent titles. Explain each pick from its matched tags and the
+  player's most-played games, in a sentence or two. Mention the score when comparing picks.
+- "More like X and Y", "I want something with co-op", "no horror" are one-off steers: pass them to recommend_games
+  (like_games / boost_tags / avoid_tags). Only call update_preferences when the player asks to remember or always
+  apply something.
+- Tags must be Steam user tag names. If a tool reports unknown tags, tell the player and offer the suggestions.
+- Owned games the player never launched come back as the backlog; bring them up when they fit well.
+- update_background_corpus is slow: ask before calling it. refresh_library takes a minute or two: say so first.
+- When the player asks what you recommended before, or to compare with past prompts, use
+  get_recommendation_history.
+- Be concise. Use short lists.
 """
 
 
-def explain(
-    top_tags: list[str],
-    most_played: list[str],
-    recommendations: list[Recommendation],
-    backlog: list[Recommendation],
-    profile_text: str = "",
-) -> str | None:
-    """Ask Gemini to explain the top picks. `profile_text` is a seam for a bio/psych profile later (empty for now).
+class Assistant:
+    """One chat session. History is kept by the Gemini chat object; every turn is appended to the log."""
 
-    Returns the response text, or None if the model returned no text.
-    """
-    client = genai.Client(api_key=config.GEMINI_API)
-    gamer_info = {
-        "profile_top_tags": top_tags,
-        "most_played_games": most_played,
-        "recommendations": recommendations,
-        "backlog": backlog,
-    }
-    contents = f"{PROMPT}\n\n{json.dumps(gamer_info, indent=2)}"
-    if profile_text:
-        contents += f"\n\nAbout the player:\n{profile_text}"
+    def __init__(self, session: str) -> None:
+        if not config.GEMINI_API:
+            raise RuntimeError("GEMINI_API is not set in .env")
+        self.session = session
+        self.tools = {tool.__name__: tool for tool in TOOLS}
+        # kept on self: once the Client is garbage-collected it closes its HTTP client and the chat stops working
+        self.client = genai.Client(api_key=config.GEMINI_API)
+        self.chat = self.client.chats.create(
+            model=MODEL,
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_PROMPT,
+                tools=list(TOOLS),
+                automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+            ),
+        )
 
-    response = client.models.generate_content(model=MODEL, contents=contents)
-    return response.text
+    def run_tool(self, call: types.FunctionCall) -> ToolCall:
+        name = call.name or ""
+        args = dict(call.args or {})
+        print(f"  -> {name}({', '.join(f'{key}={value!r}' for key, value in args.items())})")
+        tool = self.tools.get(name)
+        if tool is None:
+            return {"name": name, "args": args, "result": None, "error": f"unknown tool {name!r}"}
+        try:
+            return {"name": name, "args": args, "result": tool(**args)}
+        except Exception as e:  # the model gets the error and can recover or explain it
+            return {"name": name, "args": args, "result": None, "error": f"{type(e).__name__}: {e}"}
+
+    def send(self, prompt: str) -> str:
+        """Answer one prompt, running whatever tools the model asks for, and log the turn."""
+        calls: list[ToolCall] = []
+        response = self.chat.send_message(prompt)
+
+        for _ in range(MAX_TOOL_ROUNDS):
+            if not response.function_calls:
+                break
+            parts: list[types.Part] = []
+            for function_call in response.function_calls:
+                call = self.run_tool(function_call)
+                calls.append(call)
+                payload = {"error": call["error"]} if "error" in call else {"result": call["result"]}
+                parts.append(types.Part.from_function_response(name=call["name"], response=payload))
+            response = self.chat.send_message(parts)
+
+        reply = response.text or "(no reply: the model kept calling tools; try rephrasing)"
+        log_turn(self.session, prompt, calls, reply)
+        return reply

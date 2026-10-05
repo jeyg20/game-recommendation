@@ -7,16 +7,39 @@ against a taste profile built from your own playtime.
 
 ```sh
 python -m src.tag_profile   # once: build the Steam-wide tag corpus (asks before paging SteamSpy, ~1h)
-python main.py              # library -> taste profile -> recommendations (+ Gemini explanation)
-python main.py --no-llm --top-tags 6
+python main.py              # chat with the assistant
+python main.py --report     # one-shot ranked report (saved preferences applied), no LLM
+python main.py --history 20 # print the last 20 logged turns
 ```
 
-Needs `STEAM_API_KEY`, `STEAM_ID` and (optionally) `GEMINI_API` in `.env`. Run from the repo root.
+Needs `STEAM_API_KEY`, `STEAM_ID` and `GEMINI_API` in `.env` (`--report` works without `GEMINI_API`).
+Run from the repo root.
+
+## Assistant
+
+Gemini (`src/ai_agent.py`) reads your prompt and calls the tools in `src/tools.py`:
+
+| Tool | What it does |
+| --- | --- |
+| `get_taste_profile` | Strongest profile tags, most-played games, saved preferences |
+| `recommend_games` | Ranks unowned games, optionally steered: `like_games` ("more like X"), `boost_tags`, `avoid_tags` |
+| `look_up_game` | One game's tags, whether you own it, and how well it fits your profile |
+| `update_preferences` | Saves steers that apply to every future request (`data/preferences.json`) |
+| `refresh_library` | Refetches the Steam library, tags and HLTB times; reports new games and new playtime |
+| `update_background_corpus` | Grows the tag corpus and rebuilds the idf table (slow, asks first) |
+| `get_recommendation_history` | Past requests, how they were steered and their top picks |
+
+Steering: the library profile is scaled to unit length, the reference games' tag vectors are added on top (sharing a
+weight of 1.0 between them), boosted tags get half the strongest tag's weight, and avoided tags are removed from the
+profile. Any candidate with an avoided tag among its 5 strongest is dropped.
+
+Every turn is appended to `data/logs/history.jsonl`: prompt, each tool call with its arguments and full result, and
+the reply. In the chat, `/history [n]` lists past turns with their top picks and `/show <n>` prints one in full.
 
 ## Pipeline
 
 1. **Library** — owned games + playtime (Steam Web API), tags/genre (SteamSpy `appdetails`, non-games dropped by
-   `is_excluded`), main-story time (HLTB). Cached under `data/raw/`.
+   `is_excluded`, test servers/playtests/betas dropped by name), main-story time (HLTB). Cached under `data/raw/`.
 2. **Corpus / idf** — SteamSpy tags for ~4k popular games (`data/corpus/`), turned into a smoothed idf table so
    generic tags (Action, Singleplayer) weigh less than distinctive ones.
 3. **Taste weight** per owned game — mean of `completion = min(playtime / main_story, 1)` and
@@ -28,9 +51,9 @@ Needs `STEAM_API_KEY`, `STEAM_ID` and (optionally) `GEMINI_API` in `.env`. Run f
 7. **Score** — finalists' full tag vectors (reused from the corpus, missing ones fetched and appended to it), cosine
    against the profile with the same idf table.
 8. **Backlog** — zero-playtime owned games scored the same way, as a separate section.
-9. **Explain** — Gemini writes a short why-it-fits per pick; `profile_text` is the seam for a bio profile later.
+9. **Explain** — the assistant explains each pick from its matched tags (see above).
 
-Results are printed and saved to `data/output/recommendations.json`.
+`--report` prints the ranking and saves it to `data/output/recommendations.json`.
 
 ## Open ideas
 

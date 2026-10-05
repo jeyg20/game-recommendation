@@ -117,9 +117,10 @@ def reclassify_cache(corpus: dict[int, CorpusRecord]) -> None:
             pass
 
 
-def build_steam_collection() -> None:
-    """Grow the background corpus from SteamSpy (asks before paging), fetch tags for new appids, save the df table.
+def build_steam_collection(fetch_pages: bool | None = None) -> DfTable:
+    """Grow the background corpus from SteamSpy, fetch tags for new appids, save and return the df table.
 
+    `fetch_pages` pulls the `all` and top-100 listings first (~4 min); None asks on stdin.
     Every fetch is appended to the corpus JSONL as it happens, so an interrupted run resumes where it stopped.
     """
     steam_games_collection: dict[str, GameSummary] = {}
@@ -131,9 +132,10 @@ def build_steam_collection() -> None:
     else:
         print(f"No cache at {STEAM_BACKGROUND_CORPUS}, starting fresh")
 
-    fetch_input = input("Do you want to fetch the pages from steamspy: (yes/no)").lower().strip()
+    if fetch_pages is None:
+        fetch_pages = input("Do you want to fetch the pages from steamspy: (yes/no)").lower().strip() == "yes"
 
-    if fetch_input == "yes":
+    if fetch_pages:
         print("Fetching `all` pages 0, 2, 4, 6 (1 req/60s, ~3 min)...")
         for i in range(0, 7, 2):
             current_page = get_games_by_page(i)
@@ -201,6 +203,7 @@ def build_steam_collection() -> None:
     df_table = build_df_table(corpus)
 
     write_json(DF_TABLE_PATH, df_table)
+    return df_table
 
 
 def load_df_table() -> DfTable:
@@ -267,6 +270,41 @@ def build_profile(games: list[tuple[float, dict[str, int]]], df_table: DfTable) 
         for tag, value in tag_vector(tags, df_table).items():
             profile[tag] += weight * value
     return dict(profile)
+
+
+REFERENCE_WEIGHT = 1.0  # all "more like X" games together, relative to the whole (unit-length) library profile
+BOOST_WEIGHT = 0.5  # a boosted tag gets this share of the profile's strongest tag added on top
+
+
+def adjust_profile(
+    profile: TagVector,
+    references: list[TagVector],
+    boost_tags: list[str],
+    avoid_tags: list[str],
+) -> TagVector:
+    """Steer the library profile toward reference games / boosted tags and away from avoided ones.
+
+    The profile is scaled to unit length first so the weights mean the same thing whatever the library size.
+    Each reference is unit length too, and they share REFERENCE_WEIGHT between them.
+    """
+    profile_norm = norm(profile)
+    adjusted: Counter[str] = Counter(
+        {tag: value / profile_norm for tag, value in profile.items()} if profile_norm else {}
+    )
+
+    for reference in references:
+        reference_norm = norm(reference)
+        if reference_norm == 0:
+            continue
+        for tag, value in reference.items():
+            adjusted[tag] += REFERENCE_WEIGHT / len(references) * value / reference_norm
+
+    strongest = max(adjusted.values(), default=1.0)
+    for tag in boost_tags:
+        adjusted[tag] += BOOST_WEIGHT * strongest
+
+    avoided = {tag.lower() for tag in avoid_tags}
+    return {tag: value for tag, value in adjusted.items() if tag.lower() not in avoided}
 
 
 def top_tags(profile: TagVector, n: int) -> list[str]:

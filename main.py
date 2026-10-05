@@ -1,153 +1,117 @@
-"""Collect the owned library, enrich it with SteamSpy tags and HLTB times, then recommend games from a taste profile.
+"""Game recommendation assistant: chat with Gemini, which runs the library/profile/ranking tools for you.
 
-Each collection step is cached under data/raw. Run from the repo root: `python main.py [--no-llm] [--top-tags N]`.
+Run from the repo root:
+  python main.py            interactive assistant (needs GEMINI_API)
+  python main.py --report   one-shot ranked report from the saved preferences, no LLM
+  python main.py --history  print the log of past turns and exit
 """
 
 import argparse
-import asyncio
-from typing import TypedDict
+from typing import Any, cast
 
-from src import ai_agent, config, hltb, steam_api, steamspy, storage
-from src.recommend import Recommendation, recommend, score_backlog
-from src.steam_api import OwnedGame
-from src.tag_profile import build_profile, is_excluded, load_df_table, split_genres, taste_weight, top_tags
+from src import config, storage, tools
+from src.ai_agent import Assistant
+from src.history import Turn, load_turns, new_session_id
 
-DEFAULT_TOP_TAGS = 8
-SHOWN_RECOMMENDATIONS = 15
-SHOWN_BACKLOG = 10
-
-
-class LibraryGame(TypedDict):
-    """One owned game as it moves through the pipeline; the None fields get filled by later steps."""
-
-    appid: int
-    name: str
-    playtime_hours: float
-    main_story_hours: float | None  # HLTB
-    review_score: int | None  # HLTB
-    genres: list[str] | None  # SteamSpy
-    tags: dict[str, int] | None  # SteamSpy, tag -> votes
+HELP = """Ask for anything, e.g.:
+  recommend me something new
+  I want something like Hollow Knight and Celeste, but no pixel graphics
+  always avoid horror games from now on
+  refresh my steam library
+  what did you recommend me last time, and how does it compare to now?
+Commands: /history [n]   /show <n>   /help   /quit"""
 
 
-def fetch_owned_games() -> list[OwnedGame]:
-    """The account's owned games from the Steam Web API."""
-    print("retriving steam user games")
-    owned_games = steam_api.get_owned_games(config.STEAM_ID, config.STEAM_API_KEY)
-    if owned_games is None:
-        raise RuntimeError("GetOwnedGames request failed (check STEAM_API_KEY / STEAM_ID)")
-    if "games" not in owned_games["response"]:
-        raise RuntimeError("Steam returned no games: set the profile's Game details to Public")
-    print("games retrieved")
-    return owned_games["response"]["games"]
+def tool_summary(turn: Turn) -> list[str]:
+    """One line per tool call; recommendation calls list their top picks."""
+    lines: list[str] = []
+    for call in turn["tool_calls"]:
+        args = ", ".join(f"{key}={value!r}" for key, value in call["args"].items())
+        lines.append(f"    {call['name']}({args})" + (f"  ERROR {call['error']}" if "error" in call else ""))
+        result = call["result"]
+        if isinstance(result, dict) and isinstance(result.get("recommendations"), list):
+            picks = [f"{pick['name']} ({pick['score']})" for pick in result["recommendations"][:5]]
+            lines.append(f"      top: {'; '.join(picks)}")
+    return lines
 
 
-def int_keys(games: dict[int, LibraryGame]) -> dict[int, LibraryGame]:
-    """Re-key by int appid. A cache hit comes back from JSON keyed by str; a fresh build is already int."""
-    return {int(appid): game for appid, game in games.items()}
+def print_history(count: int) -> None:
+    turns = load_turns()
+    if not turns:
+        print(f"No history yet ({config.HISTORY_PATH})")
+        return
+    start = max(len(turns) - count, 0)
+    for index in range(start, len(turns)):
+        turn = turns[index]
+        print(f"\n[{index + 1}] {turn['timestamp']}  {turn['prompt']}")
+        print("\n".join(tool_summary(turn)))
+    print("\n/show <n> prints a turn's full reply")
 
 
-def to_library(player_games: list[OwnedGame]) -> dict[int, LibraryGame]:
-    """appid -> LibraryGame with playtime in hours; SteamSpy/HLTB fields start empty."""
-    games: dict[int, LibraryGame] = {}
-
-    for game in player_games:
-        appid = game["appid"]
-        games[appid] = {
-            "appid": appid,
-            "name": game["name"],
-            "playtime_hours": game["playtime_forever"] / 60,
-            "main_story_hours": None,
-            "review_score": None,
-            "genres": None,
-            "tags": None,
-        }
-
-    return games
+def show_turn(number: int) -> None:
+    turns = load_turns()
+    if not 1 <= number <= len(turns):
+        print(f"No turn {number} (log has {len(turns)})")
+        return
+    turn = turns[number - 1]
+    print(f"\n[{number}] {turn['timestamp']}  session {turn['session']}\n> {turn['prompt']}")
+    print("\n".join(tool_summary(turn)))
+    print(f"\n{turn['reply']}")
 
 
-def add_steamspy_data(games: dict[int, LibraryGame]) -> dict[int, LibraryGame]:
-    """Fill genres and tags from SteamSpy; drops games SteamSpy doesn't know and non-games (`is_excluded`)."""
-    for appid in list(games.keys()):
-        entry = games[appid]
-        steamspy_data = steamspy.get_game_details(entry["appid"])
-
-        if steamspy_data is None or is_excluded(steamspy_data["genre"], steamspy_data["tags"]):
-            games.pop(appid)
+def chat() -> None:
+    assistant = Assistant(new_session_id())
+    print(HELP)
+    while True:
+        try:
+            prompt = input("\n> ").strip()
+        except EOFError, KeyboardInterrupt:
+            print()
+            return
+        if not prompt:
             continue
-
-        entry["genres"] = split_genres(steamspy_data["genre"])
-        entry["tags"] = steamspy_data["tags"]
-
-    return games
-
-
-async def add_hltb_data(games: dict[int, LibraryGame]) -> dict[int, LibraryGame]:
-    """Fill main story hours and review score from the best HLTB name match (None when there's no match)."""
-    print("Retriving How long to beat data of the player Owned games")
-    for entry in games.values():
-        hltb_result = await hltb.get_game_hltb(entry["name"])
-        entry["main_story_hours"] = getattr(hltb_result, "main_story", None)
-        entry["review_score"] = getattr(hltb_result, "review_score", None)
-
-    return games
+        command, _, arg = prompt.partition(" ")
+        if command in ("/quit", "/exit"):
+            return
+        if command == "/help":
+            print(HELP)
+        elif command == "/history":
+            print_history(int(arg) if arg.isdigit() else 10)
+        elif command == "/show" and arg.isdigit():
+            show_turn(int(arg))
+        else:
+            try:
+                print(f"\n{assistant.send(prompt)}")
+            except KeyboardInterrupt:
+                print("\n(interrupted)")
 
 
-def print_section(title: str, recommendations: list[Recommendation], limit: int) -> None:
-    print(f"\n=== {title} ===")
-    if not recommendations:
-        print("(none)")
-    for rank, rec in enumerate(recommendations[:limit], start=1):
-        ratio = f"  {rec['positive_ratio']:.0%} positive" if rec["positive_ratio"] is not None else ""
-        print(f"{rank:>2}. {rec['name']}  [{rec['score']:.2f}]{ratio}")
-        print(f"    {', '.join(rec['matched_tags'])}")
-
-
-async def main(use_llm: bool, top_tag_count: int) -> None:
-    player_games = storage.load_or_build(config.STEAM_DATA_FILE_PATH, fetch_owned_games)
-    games = int_keys(storage.load_or_build(config.STEAMSPY_DATA, lambda: add_steamspy_data(to_library(player_games))))
-    games = int_keys(await storage.load_or_build_async(config.HLTB_DATA_FILE_PATH, lambda: add_hltb_data(games)))
-
-    df_table = load_df_table()
-    tagged = [game for game in games.values() if game["tags"]]
-    weighted = [
-        (taste_weight(g["playtime_hours"], g["main_story_hours"], g["tags"] or {}), g["tags"] or {}) for g in tagged
-    ]
-    profile = build_profile(weighted, df_table)
-    if not profile:
-        raise RuntimeError("Empty taste profile: no owned game has both playtime and tags")
-    top = top_tags(profile, top_tag_count)
-    print(f"\nProfile top tags: {', '.join(top)}")
-
-    # every owned appid, including the non-games dropped from the library, so none of them come back as picks
-    owned_appids = {game["appid"] for game in player_games}
-    recommendations = recommend(profile, top, owned_appids, df_table)
-    backlog = score_backlog(
-        [(g["appid"], g["name"], g["tags"] or {}) for g in tagged if g["playtime_hours"] == 0], profile, df_table
-    )
-
-    print_section("Recommended for you", recommendations, SHOWN_RECOMMENDATIONS)
-    print_section("Already in your library, never played", backlog, SHOWN_BACKLOG)
-
-    storage.write_json(
-        config.RECOMMENDATIONS_PATH,
-        {"profile_top_tags": top, "recommendations": recommendations, "backlog": backlog},
-    )
+def report() -> None:
+    """The ranking without the assistant: saved preferences applied, results printed and saved."""
+    result = tools.recommend_games(limit=15)
+    print(f"\nSteered top tags: {', '.join(cast(dict[str, float], result['steered_top_tags']))}")
+    for title, key in (
+        ("Recommended for you", "recommendations"),
+        ("Already in your library, never played", "backlog"),
+    ):
+        print(f"\n=== {title} ===")
+        for rank, pick in enumerate(cast(list[dict[str, Any]], result.get(key, [])), start=1):
+            print(f"{rank:>2}. {pick['name']}  [{pick['score']:.2f}]")
+            print(f"    {', '.join(pick['matched_tags'])}")
+    storage.write_json(config.RECOMMENDATIONS_PATH, result)
     print(f"\nFull results saved to {config.RECOMMENDATIONS_PATH}")
-
-    if not use_llm:
-        return
-    if not config.GEMINI_API:
-        print("GEMINI_API not set, skipping the LLM explanation (use --no-llm to silence this)")
-        return
-    most_played = [g["name"] for g in sorted(games.values(), key=lambda g: g["playtime_hours"], reverse=True)[:10]]
-    explanation = ai_agent.explain(top, most_played, recommendations[:SHOWN_RECOMMENDATIONS], backlog[:SHOWN_BACKLOG])
-    print("\n=== Why these picks ===")
-    print(explanation or "(the model returned no text)")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--no-llm", action="store_true", help="skip the Gemini explanation stage")
-    parser.add_argument("--top-tags", type=int, default=DEFAULT_TOP_TAGS, help="profile tags used to pull candidates")
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--report", action="store_true", help="print a ranked report without the assistant")
+    mode.add_argument("--history", type=int, nargs="?", const=20, metavar="N", help="print the last N logged turns")
     args = parser.parse_args()
-    asyncio.run(main(use_llm=not args.no_llm, top_tag_count=args.top_tags))
+
+    if args.report:
+        report()
+    elif args.history is not None:
+        print_history(args.history)
+    else:
+        chat()

@@ -12,6 +12,7 @@ PLAYER_OWNED_GAMES = "https://api.steampowered.com/IPlayerService/GetOwnedGames/
 PLAYER_GAME_STATS = "https://api.steampowered.com/ISteamUserStats/GetUserStatsForGame/v0002"
 PLAYER_RECENT_GAMES = "https://api.steampowered.com/IPlayerService/GetRecentlyPlayedGames/v0001"
 GAME_DETAILS = "https://store.steampowered.com/api/appdetails"
+STORE_SEARCH = "https://store.steampowered.com/api/storesearch/"
 
 type Params = dict[str, str | int]
 type SteamResponse = dict[str, object] | None
@@ -47,6 +48,14 @@ class OwnedGamesResponse(TypedDict):
     response: OwnedGamesPayload
 
 
+class StoreSearchItem(TypedDict):
+    """One `storesearch` hit. `type` is "app" for games (soundtracks and DLC come back too)."""
+
+    id: int
+    name: str
+    type: str
+
+
 class StoreApp(TypedDict):
     """One app in an `appdetails` response; `data` is the full store page payload."""
 
@@ -70,6 +79,14 @@ def get_game_details(game_id: str) -> dict[str, StoreApp] | None:
     print(f"Getting game {game_id} details")
     params: Params = {"appids": game_id}
     return cast(dict[str, StoreApp] | None, steam_request(GAME_DETAILS, params))
+
+
+def search_store(term: str) -> list[StoreSearchItem]:
+    """Store search by name, best match first. Empty on no match or a failed request."""
+    data = steam_request(STORE_SEARCH, {"term": term, "cc": "us", "l": "en"})
+    if data is None:
+        return []
+    return cast(list[StoreSearchItem], data.get("items", []))
 
 
 def get_player_sumamry(steam_id: str, steam_api_key: str) -> SteamResponse:
