@@ -167,7 +167,7 @@ def steer_summary(applied: Mapping[str, object]) -> str:
     parts: list[str] = []
     for key, label in (
         ("like_games", "like"),
-        ("boost_tags", "more"),
+        ("boost_tags", "must have"),
         ("avoid_tags", "avoid"),
         ("player_notes", "note"),
     ):

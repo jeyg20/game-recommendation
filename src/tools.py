@@ -185,7 +185,8 @@ def recommend_games(
 
     Args:
       like_games: Game names to steer toward ("more like Hollow Knight and Celeste"). Each is looked up on Steam.
-      boost_tags: Steam user tags to weigh more, e.g. ["Roguelike", "Co-op"]. Must be real Steam tag names.
+      boost_tags: Steam user tags the picks must have, e.g. ["Shooter"] or ["Roguelike", "Co-op"] (all of them when
+        enough games qualify), and that weigh more in the ranking. Must be real Steam tag names.
       avoid_tags: Steam user tags to steer away from; games with one among their strongest tags are dropped.
       limit: How many recommendations (and backlog games) to return.
       include_backlog: Also rank owned games the player never launched or only tried briefly.
@@ -215,9 +216,9 @@ def recommend_games(
         if steered
         else profile
     )
-    pool_tags = top_tags(taste, 8)
     excluded = {game["appid"] for game in player_games} | {ref["appid"] for ref in references}
-    recommendations = recommend(taste, pool_tags, excluded, df_table, avoid)
+    ranked = recommend(taste, top_tags(taste, 8), excluded, df_table, avoid, required_tags=boost)
+    recommendations = ranked["recommendations"]
 
     result: dict[str, object] = {
         "applied": {
@@ -228,9 +229,13 @@ def recommend_games(
             "player_notes": draft["notes"],
         },
         "steered_top_tags": rounded(taste, top_tags(taste, 10)),
-        "candidate_pools": pool_tags,
+        "candidate_pools": ranked["pool_tags"],
         "recommendations": compact(recommendations, limit),
     }
+    if ranked["requirement_relaxed"]:
+        result["requirement_relaxed"] = "too few games had every boost tag, so picks need only one of them"
+    if ranked["requirement_unenforced"]:
+        result["boost_tags_not_enforced"] = ranked["requirement_unenforced"]
     if not_found:
         result["like_games_not_found"] = not_found
     if unknown_boost or unknown_avoid:
@@ -414,7 +419,7 @@ def note_request(
 
     Args:
       like_games: Game names they want something like.
-      boost_tags: Steam user tags they want more of.
+      boost_tags: Steam user tags the picks must have ("I want a shooter", "has to be co-op").
       avoid_tags: Steam user tags they want to stay away from.
       notes: Anything else they said that matters for the picks, in a few words each.
       remove: Game names, tags or notes they took back.

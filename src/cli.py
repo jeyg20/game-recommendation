@@ -150,7 +150,7 @@ def toolbar() -> str:
     """Bottom bar: session id and what the current request draft holds."""
     draft = tools.state["draft"]
     parts = [f" session {tools.state['session']}"]
-    for key, label in (("like_games", "like"), ("boost_tags", "more"), ("avoid_tags", "avoid"), ("notes", "note")):
+    for key, label in (("like_games", "like"), ("boost_tags", "must have"), ("avoid_tags", "avoid"), ("notes", "note")):
         if draft[key]:
             parts.append(f"{label}: {', '.join(draft[key])}")
     if len(parts) == 1:

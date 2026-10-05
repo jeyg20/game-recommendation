@@ -23,6 +23,7 @@ TAG_POOL_MAX_AGE_DAYS = 1  # SteamSpy refreshes once a day server-side
 MIN_REVIEWS = 500  # shovelware floor: positive + negative
 MIN_POSITIVE_RATIO = 0.75
 FINALISTS = 100
+MIN_STRICT_FINALISTS = 20  # fewer games than this carry every required tag -> accept any of them instead
 
 
 class TagPoolCache(TypedDict):
@@ -79,14 +80,21 @@ def passes_floor(game: GameSummary) -> bool:
     return game["positive"] + game["negative"] >= MIN_REVIEWS and positive_ratio(game) >= MIN_POSITIVE_RATIO
 
 
-def pick_finalists(pools: dict[str, dict[str, GameSummary]], excluded_appids: set[int]) -> list[GameSummary]:
-    """Union the pools, drop excluded games and shovelware, rank by how many pools each game hit. No requests."""
+def pick_finalists(
+    pools: dict[str, dict[str, GameSummary]], excluded_appids: set[int], allowed_appids: set[int] | None = None
+) -> list[GameSummary]:
+    """Union the pools, drop excluded games and shovelware, rank by how many pools each game hit. No requests.
+
+    `allowed_appids`, when given, is the only set a finalist can come from (the required-tag filter).
+    """
     hits: dict[int, int] = {}
     games: dict[int, GameSummary] = {}
     for pool in pools.values():
         for game in pool.values():
             appid = int(game["appid"])
             if appid in excluded_appids or not passes_floor(game):
+                continue
+            if allowed_appids is not None and appid not in allowed_appids:
                 continue
             hits[appid] = hits.get(appid, 0) + 1
             games[appid] = game
@@ -144,10 +152,27 @@ def score(
 AVOID_TOP_TAGS = 5  # a candidate is dropped when an avoided tag is among its strongest tags
 
 
+REQUIRED_TOP_TAGS = 10  # a required tag must be this prominent: SteamSpy pools also hold games where it's a footnote
+
+
+def has_required_tags(tags: dict[str, int], required_tags: list[str], relaxed: bool) -> bool:
+    """All required tags among the game's strongest (any one of them when the requirement was relaxed)."""
+    strongest = {tag.lower() for tag in sorted(tags, key=tags.__getitem__, reverse=True)[:REQUIRED_TOP_TAGS]}
+    present = [tag.lower() in strongest for tag in required_tags]
+    return any(present) if relaxed else all(present)
+
+
 def has_avoided_tag(tags: dict[str, int], avoid_tags: list[str]) -> bool:
     avoided = {tag.lower() for tag in avoid_tags}
     strongest = sorted(tags, key=tags.__getitem__, reverse=True)[:AVOID_TOP_TAGS]
     return any(tag.lower() in avoided for tag in strongest)
+
+
+class RecommendResult(TypedDict):
+    recommendations: list[Recommendation]  # best first
+    pool_tags: list[str]  # the tag pools candidates were drawn from
+    requirement_relaxed: bool  # too few games had every required tag, so any one of them was enough
+    requirement_unenforced: list[str]  # required tags whose pool failed to fetch
 
 
 def recommend(
@@ -156,13 +181,28 @@ def recommend(
     excluded_appids: set[int],
     df_table: DfTable,
     avoid_tags: list[str] | None = None,
-) -> list[Recommendation]:
-    """Steps 5-7: retrieve pools for the top tags, narrow to finalists, score them. Best first.
+    required_tags: list[str] | None = None,
+) -> RecommendResult:
+    """Steps 5-7: retrieve pools for the top tags, narrow to finalists, score them.
 
+    `required_tags` get their pools fetched first, and every finalist must be in all of them (any of them, when
+    fewer than MIN_STRICT_FINALISTS are). Without this a specific ask like "shooters" loses to whatever the
+    library profile is heavy in: finalists rank by pool hits, and the profile's own tags win those.
     `excluded_appids` never come back (owned games, the reference games of a "more like X" request).
     """
-    pools = fetch_tag_pools(top)
-    finalists = pick_finalists(pools, excluded_appids)
+    required = required_tags or []
+    pool_tags = [*required, *(tag for tag in top if tag not in required)][: max(len(top), len(required) + 4)]
+    pools = fetch_tag_pools(pool_tags)
+
+    required_pools = [{int(game["appid"]) for game in pools[tag].values()} for tag in required if tag in pools]
+    relaxed = False
+    if required_pools:
+        finalists = pick_finalists(pools, excluded_appids, set.intersection(*required_pools))
+        if len(finalists) < MIN_STRICT_FINALISTS and len(required_pools) > 1:
+            finalists = pick_finalists(pools, excluded_appids, set.union(*required_pools))
+            relaxed = True
+    else:
+        finalists = pick_finalists(pools, excluded_appids)
     records = enrich_tags([int(game["appid"]) for game in finalists])
     profile_norm = norm(profile)
 
@@ -171,12 +211,20 @@ def recommend(
         record = records.get(int(game["appid"]))
         if record is None or (avoid_tags and has_avoided_tag(record["tags"], avoid_tags)):
             continue
+        enforced = [tag for tag in required if tag in pools]
+        if enforced and not has_required_tags(record["tags"], enforced, relaxed):
+            continue
         rec = score(int(game["appid"]), game["name"], record["tags"], profile, profile_norm, df_table)
         rec["positive_ratio"] = positive_ratio(game)
         recommendations.append(rec)
 
     recommendations.sort(key=lambda rec: rec["score"], reverse=True)
-    return recommendations
+    return {
+        "recommendations": recommendations,
+        "pool_tags": pool_tags,
+        "requirement_relaxed": relaxed,
+        "requirement_unenforced": [tag for tag in required if tag not in pools],
+    }
 
 
 def score_backlog(

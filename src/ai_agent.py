@@ -45,8 +45,10 @@ Recommending:
 - The player already sees every recommend_games result as a table (name, fit score, rating or hours, matched tags)
   right above your reply. Don't list the picks again. Instead, in a few short lines, say which 2-3 fit best and
   why, tied to what they asked, their most-played games and the player_notes; point out a backlog game if one fits.
-- Steers ("more like X", "with co-op", "no horror") go to note_request or straight to recommend_games
-  (like_games / boost_tags / avoid_tags). Noted steers are applied automatically; don't repeat them.
+- Steers go to note_request or straight to recommend_games. Noted steers are applied automatically; don't repeat
+  them. like_games = "more like X"; boost_tags = must-haves ("a shooter", "has to be co-op"): every pick will carry
+  them, so use them only for what the player actually requires and keep softer wishes as notes; avoid_tags =
+  "no horror". If the result says the requirement was relaxed, tell the player.
 - Only call update_preferences when the player asks to remember or always apply something across sessions.
 - Tags must be Steam user tag names. If a tool reports unknown tags, tell the player and offer the suggestions.
 - The backlog is owned games never launched or only tried briefly (playtime_hours shows which); bring them up when

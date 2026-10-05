@@ -274,7 +274,7 @@ def build_profile(games: list[tuple[float, dict[str, int]]], df_table: DfTable) 
 
 
 REFERENCE_WEIGHT = 1.0  # all "more like X" games together, relative to the whole (unit-length) library profile
-BOOST_WEIGHT = 0.5  # a boosted tag gets this share of the profile's strongest tag added on top
+BOOST_WEIGHT = 1.0  # a boosted tag gets this share of the profile's strongest tag added on top
 
 
 def adjust_profile(

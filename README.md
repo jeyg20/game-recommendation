@@ -42,9 +42,11 @@ Gemini (`src/ai_agent.py`) reads your prompt and calls the tools in `src/tools.p
 | `list_past_sessions` | Logged sessions with their first prompt |
 | `start_new_session` | Closes this session's log and starts a fresh one (also `/new`) |
 
-Steering: the library profile is scaled to unit length, the reference games' tag vectors are added on top (sharing a
-weight of 1.0 between them), boosted tags get half the strongest tag's weight, and avoided tags are removed from the
-profile. Any candidate with an avoided tag among its 5 strongest is dropped.
+Steering: the library profile is scaled to unit length and the reference games' tag vectors are added on top
+(sharing a weight of 1.0 between them). Boost tags are must-haves: their SteamSpy pools are always fetched, every
+finalist has to be in all of them and carry each one among its 10 strongest tags (any one of them, flagged as
+relaxed, when fewer than 20 games qualify), and they get the strongest tag's weight in the ranking. Avoided tags are
+removed from the profile, and any candidate with one among its 5 strongest is dropped.
 
 **When it recommends.** Only when you ask for picks ("recommend", "what should I play", "that's it") or send a
 complete request in one message. While you're still describing what you want, it notes each detail with
