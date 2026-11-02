@@ -16,6 +16,8 @@ PLAYER_RECENT_GAMES = "https://api.steampowered.com/IPlayerService/GetRecentlyPl
 GAME_DETAILS = "https://store.steampowered.com/api/appdetails"
 STORE_SEARCH = "https://store.steampowered.com/api/storesearch/"
 WISHLIST = "https://api.steampowered.com/IWishlistService/GetWishlist/v1"
+FRIEND_LIST = "https://api.steampowered.com/ISteamUser/GetFriendList/v0001"
+PLAYER_SUMMARY_MAX_IDS = 100  # GetPlayerSummaries takes at most this many comma-separated ids
 
 type Params = dict[str, str | int]
 type SteamResponse = dict[str, object] | None
@@ -85,7 +87,8 @@ def steam_request(url: str, params: Params) -> SteamResponse:
         return None
 
 
-SECRET_PARAMS = ("key", "steamid")  # requests puts the full URL in its error text; these come from .env
+# requests puts the full URL in its error text; key and steamid come from .env, steamids can be the friends' ids
+SECRET_PARAMS = ("key", "steamid", "steamids")
 
 
 def redact(message: str, params: Params) -> str:
@@ -166,6 +169,32 @@ def get_wishlist(steam_id: str, steam_api_key: str = "") -> list[WishlistItem] |
     if not isinstance(response, dict):
         return None
     return cast(list[WishlistItem], cast(dict[str, object], response).get("items", []))
+
+
+def get_friend_ids(steam_id: str, steam_api_key: str) -> list[str] | None:
+    """SteamIDs of the account's friends. None on a failed request (Steam answers 401 when the friends list is
+    private)."""
+    status.update("Getting friends list")
+    params: Params = {"key": steam_api_key, "steamid": steam_id, "relationship": "friend"}
+    data = steam_request(FRIEND_LIST, params)
+    friendslist = data.get("friendslist") if data is not None else None
+    if not isinstance(friendslist, dict):
+        return None
+    friends = cast(list[dict[str, object]], cast(dict[str, object], friendslist).get("friends") or [])
+    return [str(friend["steamid"]) for friend in friends if "steamid" in friend]
+
+
+def get_player_names(steam_ids: list[str], steam_api_key: str) -> dict[str, str]:
+    """steamid -> display name, PLAYER_SUMMARY_MAX_IDS ids per request. Ids Steam doesn't answer for are left out."""
+    found: dict[str, str] = {}
+    for start in range(0, len(steam_ids), PLAYER_SUMMARY_MAX_IDS):
+        data = get_player_sumamry(",".join(steam_ids[start : start + PLAYER_SUMMARY_MAX_IDS]), steam_api_key)
+        response = data.get("response") if data is not None else None
+        players = cast(dict[str, object], response).get("players") if isinstance(response, dict) else None
+        for player in cast(list[dict[str, object]], players or []):
+            if isinstance(player.get("steamid"), str) and isinstance(player.get("personaname"), str):
+                found[cast(str, player["steamid"])] = cast(str, player["personaname"])
+    return found
 
 
 # def merge_data(data_a: dict, data_b: dict):

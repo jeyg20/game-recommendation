@@ -19,6 +19,7 @@ STEAMSPY_DATA = ROOT / "data/raw/steamspy_data.json"
 HLTB_DATA_FILE_PATH = ROOT / "data/raw/hltb_game_data_list.json"
 ACHIEVEMENTS_PATH = ROOT / "data/raw/achievements.json"  # appid -> [achieved, total] | null (library.py)
 WISHLIST_PATH = ROOT / "data/raw/wishlist.json"  # the player's wishlist, refetched daily (wishlist.py)
+FRIENDS_PATH = ROOT / "data/raw/friends.json"  # friends' names and owned appids, refetched daily (friends.py)
 
 # Steam-wide tag corpus (tag_profile.py)
 STEAM_BACKGROUND_CORPUS = ROOT / "data/corpus/steam_background_corpus.json"

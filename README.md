@@ -65,6 +65,7 @@ Gemini (`src/ai_agent.py`) reads your prompt and calls the tools in `src/tools.p
 | `rate_games` | Saves liked, disliked and not-interested games (`data/feedback.json`) that steer every later request |
 | `get_feedback` | The games you rated with `rate_games` |
 | `rank_wishlist` | Your Steam wishlist ranked by fit to your profile (`data/raw/wishlist.json`, refetched daily) |
+| `friends_games` | Games your Steam friends own and you don't, ranked by fit, with who owns each (`data/raw/friends.json`, refetched daily) |
 
 Steering: the library profile is scaled to unit length and the reference games' tag vectors are added on top
 (sharing a weight of 1.0 between them). Boost tags are must-haves: their SteamSpy pools are always fetched, every
@@ -87,8 +88,13 @@ Wishlist: `rank_wishlist` scores every wishlisted game against the unsteered lib
 Wildcards: `recommend_games` also returns up to three `wildcards`, games from tags just outside your usual ones. It
 takes the profile tags ranked 9-20 (just past the 8 pool tags), skips generic ones (idf below the median), fetches the
 first three tags' pools, and keeps games that pass the same floor and avoid tags but have none of the 8 pool tags among
-their 5 strongest. They're ranked by fit and carry `via_tag`. `on_sale_only` applies to them too; there are none when
+their 5 strongest. They're ranked by fit, then spread for variety like the main picks, and carry `via_tag`. `on_sale_only` applies to them too; there are none when
 boost tags are required. `include_wildcards=False` leaves them out.
+
+Friends: `friends_games` collects the games your Steam friends own (at least `min_friends` of them) that you don't,
+tags the 60 most-owned, and scores them against the profile (`boost_tags` must-haves and `avoid_tags` work as in
+`recommend_games`). Friends with private libraries are skipped and counted. The first call of the day makes one
+request per friend at 1 per second; friends' names and libraries are cached for a day in `data/raw/friends.json`.
 
 **When it recommends.** Only when you ask for picks ("recommend", "what should I play", "that's it") or send a
 complete request in one message. While you're still describing what you want, it notes each detail with

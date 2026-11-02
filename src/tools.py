@@ -9,7 +9,7 @@ import time
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from typing import TypedDict, cast
 
-from src import library, steam_api, steamspy, wishlist
+from src import friends, library, steam_api, steamspy, wishlist
 from src.explain import explain
 from src.feedback import (
     RATINGS,
@@ -820,6 +820,72 @@ def rank_wishlist(limit: int = 10) -> dict[str, object]:
     return result
 
 
+FRIENDS_MAX_CANDIDATES = 60  # most-owned friend games tagged and scored; tag fetches for misses run at 1 req/s
+
+
+def friends_games(
+    min_friends: int = 1, limit: int = 10, boost_tags: list[str] | None = None, avoid_tags: list[str] | None = None
+) -> dict[str, object]:
+    """Rank games the player's Steam friends own (and the player doesn't) by fit to their taste profile, best first.
+
+    Use for "what could I play with my friends?" or co-op picks. Each pick lists the friends who own it. Slow on the
+    first call of the day: one Steam request per friend at ~1 request/second, then tags for new games; cached for a
+    day after that. Friends with private libraries are skipped and counted. Noted steers aren't applied: pass them.
+
+    Args:
+      min_friends: Only games at least this many friends own (2+ for a group game).
+      limit: How many games to return.
+      boost_tags: Steam user tags every pick must have among its strongest, e.g. ["Co-op"]. They weigh more too.
+      avoid_tags: Steam user tags to steer away from; games with one among their strongest tags are dropped.
+    """
+    player_games, _, df_table, profile = ensure_loaded()
+    cache = friends.load_friends()
+    if cache is None:
+        return {"error": "Couldn't read the Steam friends list: the request failed or the friends list is private."}
+    boost, unknown_boost = canonical_tags(boost_tags, df_table)
+    avoid, unknown_avoid = canonical_tags(avoid_tags, df_table)
+    taste = adjust_profile(profile, [], boost, avoid) if boost or avoid else profile
+    excluded = {game["appid"] for game in player_games} | never_recommend(load_feedback())
+    owned_by = {
+        appid: names
+        for appid, names in friends.owners(cache).items()
+        if appid not in excluded and len(names) >= max(min_friends, 1)
+    }
+    candidates = sorted(owned_by, key=lambda appid: len(owned_by[appid]), reverse=True)[:FRIENDS_MAX_CANDIDATES]
+    records = enrich_tags(candidates)
+    taste_norm = norm(taste)
+    titles = cache["game_names"]
+    ranked = sorted(
+        (
+            score(appid, titles.get(str(appid), f"app {appid}"), records[appid]["tags"], taste, taste_norm, df_table)
+            for appid in candidates
+            if appid in records and fits_tags(records[appid]["tags"], boost, avoid, relaxed=False)
+        ),
+        key=lambda rec: rec["score"],
+        reverse=True,
+    )
+    private = sum(1 for friend in cache["friends"].values() if friend["appids"] is None)
+    result: dict[str, object] = {
+        "friends": len(cache["friends"]),
+        "private_libraries": private,
+        "games_owned_by_friends": len(owned_by),
+        "candidates_scored": len(candidates),
+        "picks": [
+            {
+                "name": rec["name"],
+                "appid": rec["appid"],
+                "score": round(rec["score"], 3),
+                "matched_tags": rec["matched_tags"],
+                "owned_by": owned_by[rec["appid"]],
+            }
+            for rec in ranked[:limit]
+        ],
+    }
+    if unknown_boost or unknown_avoid:
+        result["unknown_tags_ignored"] = unknown_boost | unknown_avoid
+    return result
+
+
 TOOLS = [
     get_taste_profile,
     recommend_games,
@@ -836,4 +902,5 @@ TOOLS = [
     rate_games,
     get_feedback,
     rank_wishlist,
+    friends_games,
 ]
