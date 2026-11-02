@@ -29,7 +29,8 @@ Status: `todo` → `running` → `review` → `merged` (or `blocked: <why>`). Up
 | F07 | [Achievements in the taste weight](tasks/F07-achievements.md) | 2 | R03 | `feat/f07-achievements` | merged | `b11d923`. MRR 0.013 → 0.014, recall unchanged (most heavy games already exceed their story time). Achievements are a separate cached step (`library.load_achievement_shares`); the main checkout builds `data/raw/achievements.json` on first load (~48 requests, ~1 min). Found and fixed after merge: failed Steam requests printed the key (`1de5118`) |
 | F08 | [What do my friends own?](tasks/F08-friends.md) | 3 | wave 1 | `feat/f08-friends` | merged | `9cf5ee6`. optional. Live: 15 friends, 3 private, first call 95 s, cached 0.8 s. `steamids` added to the redacted params. Saved/noted steers aren't auto-applied (the model passes them) |
 | C01 | [Follow-ups from the reviews](tasks/C01-cleanup.md) | 4 | R05 | `feat/c01-cleanup` | running | T3 child thread, alongside F09 (not export.py) |
-| F09 | [Weekly digest](tasks/F09-digest.md) | 3 | F06 | `feat/f09-digest` | running | optional. T3 child thread, alongside R05 |
+| C02 | [Export and digest polish, HLTB failures](tasks/C02-export-polish.md) | 4 | F09 | `feat/c02-export-polish` | running | T3 child thread, alongside C01 |
+| F09 | [Weekly digest](tasks/F09-digest.md) | 3 | F06 | `feat/f09-digest` | merged | `bf5dd70`. optional. Includes wildcards (diffed) and the backlog (top 5, never diffed). `export.Section.more` now drops fields that are None everywhere (no empty price columns on the backlog). State is the last digest only, so a pick that leaves and returns shows as new again |
 
 ## Waves
 
