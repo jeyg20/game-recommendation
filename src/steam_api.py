@@ -81,8 +81,20 @@ def steam_request(url: str, params: Params) -> SteamResponse:
         res.raise_for_status()
         return res.json()
     except requests.RequestException as e:
-        status.say(style(f"  ! Steam request failed {url}: {e}", "yellow"))
+        status.say(style(f"  ! Steam request failed {url}: {redact(str(e), params)}", "yellow"))
         return None
+
+
+SECRET_PARAMS = ("key", "steamid")  # requests puts the full URL in its error text; these come from .env
+
+
+def redact(message: str, params: Params) -> str:
+    """`message` with the API key and Steam ID taken out, so a failed request never prints them."""
+    for name in SECRET_PARAMS:
+        value = str(params.get(name, ""))
+        if value:
+            message = message.replace(value, f"<{name}>")
+    return message
 
 
 def get_game_details(game_id: str) -> dict[str, StoreApp] | None:
