@@ -6,7 +6,8 @@
 
 Spawns `uv run gamer-guide-mcp`, speaks raw JSON-RPC over its stdio and prints each tool's result. Exits 1 when a
 tool returns an error, or when any line the server writes to stdout isn't JSON-RPC (a stray print breaks real
-clients). Server stderr (status messages) passes through. The session logs the run creates are deleted afterwards.
+clients). Server stderr (status messages) passes through. The session logs of this run's server are deleted afterwards
+(only its own session ids: a real client's log created meanwhile is left alone).
 """
 
 import json
@@ -114,7 +115,10 @@ def parse_calls(argv: list[str]) -> list[tuple[str, Message]]:
         name = argv[i]
         args: object = {}
         if i + 1 < len(argv) and argv[i + 1].lstrip().startswith("{"):
-            args = json.loads(argv[i + 1])
+            try:
+                args = json.loads(argv[i + 1])
+            except json.JSONDecodeError as e:
+                raise SmokeError(f"{name}: arguments aren't valid JSON: {e}") from e
             i += 1
         if not isinstance(args, dict):
             raise SmokeError(f"{name}: arguments must be a JSON object")
@@ -135,8 +139,8 @@ def tool_output(result: Message) -> object:
         return "".join(texts)
 
 
-def run(calls: list[tuple[str, Message]]) -> bool:
-    """True when every call succeeded."""
+def run(calls: list[tuple[str, Message]], sessions: set[str]) -> bool:
+    """True when every call succeeded. Adds every session id the server used to `sessions`, for cleanup."""
     server = Server()
     ok = True
     try:
@@ -155,27 +159,32 @@ def run(calls: list[tuple[str, Message]]) -> bool:
         listed = cast(list[dict[str, object]], server.request("tools/list", {})["tools"])
         names = [str(tool["name"]) for tool in listed]
         print(f"tools ({len(names)}): {', '.join(names)}")
+        current = server.request("tools/call", {"name": "list_past_sessions", "arguments": {"limit": 0}})
+        sessions.add(str(cast(Message, tool_output(current))["current_session"]))
 
         for name, args in calls:
             result = server.request("tools/call", {"name": name, "arguments": args})
             failed = bool(result.get("isError"))
+            output = tool_output(result)
+            if name == "start_new_session" and isinstance(output, dict):
+                sessions.add(str(cast(Message, output)["session"]))
             ok = ok and not failed
             print(f"\n{'ERROR ' if failed else ''}{name} {json.dumps(args)}")
-            print(json.dumps(tool_output(result), indent=2, ensure_ascii=False))
+            print(json.dumps(output, indent=2, ensure_ascii=False))
     finally:
         server.close()
     return ok
 
 
 def main() -> int:
-    before = set(SESSIONS_DIR.glob("*.jsonl")) if SESSIONS_DIR.is_dir() else set()
+    sessions: set[str] = set()
     try:
-        ok = run(parse_calls(sys.argv[1:]))
-    except SmokeError as e:
+        ok = run(parse_calls(sys.argv[1:]), sessions)
+    except (SmokeError, OSError) as e:
         print(f"FAIL: {e}", file=sys.stderr)
         ok = False
     finally:
-        created = set(SESSIONS_DIR.glob("*.jsonl")) - before if SESSIONS_DIR.is_dir() else set()
+        created = [path for path in (SESSIONS_DIR / f"{session}.jsonl" for session in sessions) if path.is_file()]
         for path in created:
             path.unlink()
         if created:

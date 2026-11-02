@@ -1,5 +1,6 @@
 """Shared fixtures. Every test runs offline and against a temp copy of the data paths, never the player's data/."""
 
+import copy
 import math
 import socket
 import sys
@@ -58,20 +59,14 @@ def isolated_data(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     return tmp_data
 
 
+INITIAL_STATE = copy.deepcopy(tools.state)  # taken at import, before any test touches it
+
+
 @pytest.fixture(autouse=True)
 def fresh_state() -> None:
     """Reset the tools' shared state and reference cache, so no test sees another's library or draft."""
-    tools.state.update(
-        {
-            "player_games": None,
-            "games": None,
-            "df_table": None,
-            "profile": None,
-            "session": "",
-            "new_session_requested": False,
-            "draft": tools.empty_draft(),
-        }
-    )
+    tools.state.clear()
+    tools.state.update(copy.deepcopy(INITIAL_STATE))
     tools.reference_cache.clear()
 
 
