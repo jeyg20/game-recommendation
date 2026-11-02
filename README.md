@@ -35,11 +35,13 @@ reasoning instead of Gemini; no `GEMINI_API` needed. The repo's `.mcp.json` regi
 claude mcp add gamer-guide -- uv run --project ~/dev/gamer_guide gamer-guide-mcp
 ```
 
-One server process is one session with its own log; each tool call is logged as a turn (`[mcp] <tool>`, no prompt
-or reply), so `get_recommendation_history` works as in the CLI. `start_new_session` isn't served: a new
-conversation is a new session. Calls run one at a time under a lock, since the tools share loaded state.
+The server process can outlive a conversation (Claude Desktop shares one across chats, Claude Code keeps it across
+`/clear`), so Claude is told to call `start_new_session` at the start of each one: a new log and an empty request
+draft. State is per process, so use one active chat at a time. Each tool call is logged as a turn (`[mcp] <tool>`, no prompt or reply), so `get_recommendation_history`
+works as in the CLI. Calls run one at a time under a lock, since the tools share loaded state.
 `refresh_library` and `update_background_corpus` can outlast the client's tool timeout; in Claude Code raise it with
-`MCP_TOOL_TIMEOUT` (milliseconds) if they get cut off. Status messages go to the client's MCP log (stderr).
+`MCP_TOOL_TIMEOUT` (milliseconds). A call the client gave up on still runs to the end and holds the lock, so later
+calls wait for it. Status messages go to the client's MCP log (stderr).
 
 ## Assistant
 

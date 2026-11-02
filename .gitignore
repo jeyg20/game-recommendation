@@ -12,4 +12,3 @@ data/
 # Virtual environments
 .venv
 !.mcp.json
-graphify-out/

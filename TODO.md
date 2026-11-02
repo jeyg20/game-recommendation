@@ -1,7 +1,8 @@
 # MCP server TODO
 
 Status (2026-11-01): built by Claude on request ("full send"), see `src/mcp_server.py` and the README's MCP section.
-Decisions: one process = one session, set in `main()` before `run()`; each tool call logged as a turn
+Decisions: session set in `main()` before `run()`, and `start_new_session` (served, immediate reset) at the start of
+each conversation, since the process can outlive one; each tool call logged as a turn
 (`[mcp] <tool>`); all calls serialized by one lock; picks shown as Markdown tables per the instructions; the SDK's
 stdio transport already diverts fd 1 to stderr, so no `ui.py` change was needed (proved with a tool that prints).
 Left: approve the server in `claude` and run a real chat; progress reporting (option B).
