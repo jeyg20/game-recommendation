@@ -106,13 +106,17 @@ def evaluate(
     label: str = "",
     last_played: Mapping[int, int] | None = None,
     recent_appids: Collection[int] = (),
+    achievement_share: Mapping[int, float] | None = None,
 ) -> EvalResult:
     """Run the leave-one-out over `games` (the enriched library); `owned_appids` is every owned appid, as excluded.
 
     `last_played` (appid -> rtime_last_played) lets the profile count abandoned games against their tags, as live.
     It and `recent_appids` (played in the last two weeks) also fade old favourites' weights, as live.
+    `achievement_share` (appid -> unlocked share) counts achievements towards completion, as live.
     """
-    profile = library_profile(games.values(), df_table, last_played, recent_appids=recent_appids)
+    profile = library_profile(
+        games.values(), df_table, last_played, recent_appids=recent_appids, achievement_share=achievement_share
+    )
     pools, _ = rec.fetch_tag_pools(top_tags(profile, POOL_TAGS))
     listings = {int(game["appid"]): game for pool in pools.values() for game in pool.values()}
     held_out = pick_held_out(games, listings, HOLDOUT_GAMES)
@@ -121,7 +125,9 @@ def evaluate(
     for n, game in enumerate(held_out, start=1):
         status.update(f"ranking without {game['name']}", n, len(held_out))
         rest = [other for other in games.values() if other["appid"] != game["appid"]]
-        without = library_profile(rest, df_table, last_played, recent_appids=recent_appids)
+        without = library_profile(
+            rest, df_table, last_played, recent_appids=recent_appids, achievement_share=achievement_share
+        )
         ranked = rec.recommend(without, top_tags(without, POOL_TAGS), owned_appids - {game["appid"]}, df_table)
         results.append(
             {

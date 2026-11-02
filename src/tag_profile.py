@@ -225,18 +225,30 @@ def is_open_ended(tags: dict[str, int]) -> bool:
     return any(tag.lower() in OPEN_ENDED_TAGS for tag in top_tags)
 
 
-def taste_weight(playtime_hours: float, main_story_hours: float | None, tags: dict[str, int]) -> float:
+def taste_weight(
+    playtime_hours: float,
+    main_story_hours: float | None,
+    tags: dict[str, int],
+    achievement_share: float | None = None,
+) -> float:
     """How much an owned game says about the player's taste, in [0, 1].
 
     completion = min(playtime / main_story, 1)   capped, no blowout
     volume     = 1 - exp(-playtime / 40)         saturating
     weight     = mean of the two, or volume only when there's no usable main story
+
+    `achievement_share` (unlocked / total) is a second sign of finishing a game: completion takes the larger of
+    the two, and a game with no main story uses the share as its completion. Open-ended games keep volume only,
+    since their achievements track grind, not finishing. None (no achievements, or no data) changes nothing.
     """
     volume = 1 - math.exp(-playtime_hours / VOLUME_SCALE_HOURS)
-    if not main_story_hours or is_open_ended(tags):
+    if is_open_ended(tags):
         return volume
-    completion = min(playtime_hours / main_story_hours, 1)
-    return (completion + volume) / 2
+    story = min(playtime_hours / main_story_hours, 1) if main_story_hours else None
+    candidates = [c for c in (story, achievement_share) if c is not None]
+    if not candidates:
+        return volume
+    return (max(candidates) + volume) / 2
 
 
 RECENCY_FLOOR = 0.5  # a game last played long ago still counts this much: old favourites fade, they don't vanish

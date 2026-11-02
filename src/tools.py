@@ -97,6 +97,7 @@ def ensure_loaded() -> tuple[list[OwnedGame], dict[int, LibraryGame], DfTable, T
             state["df_table"],
             last_played_by_appid(state["player_games"]),
             recent_appids=played_recently(state["player_games"]),
+            achievement_share=library.load_achievement_shares(state["player_games"]),
         )
         if not state["profile"]:
             raise RuntimeError("Empty taste profile: no owned game has both playtime and tags")
@@ -119,22 +120,29 @@ def library_profile(
     last_played: Mapping[int, int] | None = None,
     now: float | None = None,
     recent_appids: Collection[int] = (),
+    achievement_share: Mapping[int, float] | None = None,
 ) -> TagVector:
     """The taste profile of these owned games. Shared with the offline evaluation, which leaves one game out.
 
     Abandoned games (see is_abandoned) weigh -ABANDON_WEIGHT; without `last_played` none count as abandoned.
     Other games' weights fade with time since last played (recency_factor), except games in `recent_appids`
-    (played in the last two weeks).
+    (played in the last two weeks). `achievement_share` (appid -> unlocked share) feeds taste_weight's completion.
     The abandoned penalty doesn't fade: an old abandonment is no weaker evidence against its tags.
     """
     last_played = last_played or {}
+    achievement_share = achievement_share or {}
     now = time.time() if now is None else now
 
     def weight(game: LibraryGame) -> float:
         played = last_played.get(game["appid"], 0)
         if is_abandoned(game, played, now):
             return -ABANDON_WEIGHT
-        base = taste_weight(game["playtime_hours"], game["main_story_hours"], game["tags"] or {})
+        base = taste_weight(
+            game["playtime_hours"],
+            game["main_story_hours"],
+            game["tags"] or {},
+            achievement_share.get(game["appid"]),
+        )
         return base if game["appid"] in recent_appids else base * recency_factor(played, now)
 
     return build_profile([(weight(g), g["tags"] or {}) for g in games if g["tags"]], df_table)

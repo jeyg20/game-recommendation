@@ -2,6 +2,7 @@
 
 import asyncio
 import re
+import time
 from typing import TypedDict
 
 from src import config, hltb, steam_api, steamspy, storage
@@ -100,6 +101,34 @@ async def add_hltb_data(games: dict[int, LibraryGame]) -> dict[int, LibraryGame]
     return games
 
 
+ACHIEVEMENT_PACE_SECONDS = 1  # one Steam request per eligible game; paced like the other per-game steps
+
+type Achievements = dict[int, tuple[int, int] | None]  # appid -> (achieved, total); None = no achievements
+
+
+def fetch_achievements(player_games: list[OwnedGame]) -> Achievements:
+    """(achieved, total) for each owned game Steam says has visible stats. Others have no achievements to ask about."""
+    eligible = [game for game in player_games if game.get("has_community_visible_stats")]
+    achievements: Achievements = {}
+    for n, game in enumerate(eligible, start=1):
+        status.update(f"fetching achievements: {game['name']}", n, len(eligible))
+        achievements[game["appid"]] = steam_api.get_player_achievements(
+            config.STEAM_ID, config.STEAM_API_KEY, game["appid"]
+        )
+        time.sleep(ACHIEVEMENT_PACE_SECONDS)
+    return achievements
+
+
+def achievement_shares(achievements: Achievements) -> dict[int, float]:
+    """appid -> share of the game's achievements unlocked, for games that have any. Accepts a cache hit's str keys."""
+    return {int(appid): pair[0] / pair[1] for appid, pair in achievements.items() if pair and pair[1]}
+
+
+def load_achievement_shares(player_games: list[OwnedGame]) -> dict[int, float]:
+    """Achievement shares from the cached step, fetching it when the cache is missing."""
+    return achievement_shares(storage.load_or_build(config.ACHIEVEMENTS_PATH, lambda: fetch_achievements(player_games)))
+
+
 def load_library() -> tuple[list[OwnedGame], dict[int, LibraryGame]]:
     """(every owned game, the enriched library of real games). Cached steps are read, missing ones are built."""
     player_games = storage.load_or_build(config.STEAM_DATA_FILE_PATH, fetch_owned_games)
@@ -113,7 +142,9 @@ def refresh_library() -> tuple[list[OwnedGame], dict[int, LibraryGame]]:
     player_games = fetch_owned_games()
     games = add_steamspy_data(to_library(player_games))
     games = asyncio.run(add_hltb_data(games))
+    achievements = fetch_achievements(player_games)
     storage.write_json(config.STEAM_DATA_FILE_PATH, player_games)
     storage.write_json(config.STEAMSPY_DATA, games)
     storage.write_json(config.HLTB_DATA_FILE_PATH, games)
+    storage.write_json(config.ACHIEVEMENTS_PATH, achievements)
     return player_games, games

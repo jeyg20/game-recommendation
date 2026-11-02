@@ -171,3 +171,11 @@ def test_mcp_start_new_session_resets_the_draft(df_table: DfTable) -> None:
     assert result["closed_session"] == "old-session"
     assert result["session"] == tools.state["session"] != "old-session"
     assert tools.state["draft"] == tools.empty_draft()
+
+
+def test_achievement_share_strengthens_a_game_without_a_main_story(df_table: DfTable) -> None:
+    game = tagged(1, 10.0, {"RPG": 1})
+    plain = tools.library_profile([game], df_table, now=NOW)
+    assert tools.library_profile([game], df_table, now=NOW, achievement_share={}) == plain
+    finished = tools.library_profile([game], df_table, now=NOW, achievement_share={1: 1.0})
+    assert finished["RPG"] > plain["RPG"]

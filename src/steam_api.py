@@ -11,6 +11,7 @@ from src.ui import status, style
 PLAYER_SUMMARY = "https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v0002"
 PLAYER_OWNED_GAMES = "https://api.steampowered.com/IPlayerService/GetOwnedGames/v0001"
 PLAYER_GAME_STATS = "https://api.steampowered.com/ISteamUserStats/GetUserStatsForGame/v0002"
+PLAYER_ACHIEVEMENTS = "https://api.steampowered.com/ISteamUserStats/GetPlayerAchievements/v0001"
 PLAYER_RECENT_GAMES = "https://api.steampowered.com/IPlayerService/GetRecentlyPlayedGames/v0001"
 GAME_DETAILS = "https://store.steampowered.com/api/appdetails"
 STORE_SEARCH = "https://store.steampowered.com/api/storesearch/"
@@ -125,6 +126,20 @@ def get_player_stats(steam_id: str, steam_api_key: str, game_id: str) -> SteamRe
     status.update("Getting player stats")
     params: Params = {"appid": game_id, "key": steam_api_key, "steamid": steam_id, "format": "json"}
     return steam_request(PLAYER_GAME_STATS, params)
+
+
+def get_player_achievements(steam_id: str, steam_api_key: str, appid: int) -> tuple[int, int] | None:
+    """(achieved, total) achievements for one game. None for a game without achievements or a failed request."""
+    status.update(f"Getting achievements for {appid}")
+    params: Params = {"appid": appid, "key": steam_api_key, "steamid": steam_id, "format": "json"}
+    data = steam_request(PLAYER_ACHIEVEMENTS, params)
+    stats = data.get("playerstats") if data is not None else None
+    if not isinstance(stats, dict):
+        return None
+    achievements = cast(list[dict[str, object]], cast(dict[str, object], stats).get("achievements") or [])
+    if not achievements:
+        return None
+    return sum(1 for a in achievements if a.get("achieved") == 1), len(achievements)
 
 
 def get_wishlist(steam_id: str, steam_api_key: str = "") -> list[WishlistItem] | None:

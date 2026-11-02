@@ -14,7 +14,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))  # so `src` imports when run as a plain script
 
-from src import tools
+from src import library, tools
 from src.evaluate import EvalResult, evaluate, save
 from src.ui import status
 
@@ -50,6 +50,7 @@ def main() -> int:
             label=args.label,
             last_played=tools.last_played_by_appid(player_games),
             recent_appids=tools.played_recently(player_games),
+            achievement_share=library.load_achievement_shares(player_games),
         )
         path = save(result)
 

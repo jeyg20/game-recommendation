@@ -104,6 +104,8 @@ when there is one (so a finished 90-minute game doesn't count).
    generic tags (Action, Singleplayer) weigh less than distinctive ones.
 3. **Taste weight** per owned game — mean of `completion = min(playtime / main_story, 1)` and
    `volume = 1 - exp(-playtime / 40)`; volume only when there's no main story or the game is multiplayer/idle.
+   The share of the game's Steam achievements unlocked (cached in `data/raw/achievements.json`) also counts as
+   completion: the larger of the two is used, and it stands in for completion when there's no main story.
    An *abandoned* game (launched, barely started, last played over 120 days ago) weighs -0.3 instead: it counts
    against its tags. Never-launched games weigh 0. Every other weight is multiplied by a recency factor,
    `0.5 + 0.5 * exp(-days_since_last_played / 365)`, so current tastes count more and old favourites fade to half,

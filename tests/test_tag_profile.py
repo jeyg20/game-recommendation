@@ -151,3 +151,24 @@ def test_recency_factor_fades_towards_the_floor_but_not_below() -> None:
 
 def test_recency_factor_is_one_without_a_last_played_date() -> None:
     assert recency_factor(0, NOW) == 1.0
+
+
+def test_taste_weight_without_an_achievement_share_is_unchanged() -> None:
+    for main_story in (20, None):
+        assert taste_weight(10, main_story, {"RPG": 10}, None) == taste_weight(10, main_story, {"RPG": 10})
+
+
+def test_achievement_share_raises_completion_above_the_story_share() -> None:
+    volume = 1 - math.exp(-10 / 40)
+    assert taste_weight(10, 20, {"RPG": 10}, 0.9) == pytest.approx((0.9 + volume) / 2)
+    assert taste_weight(10, 20, {"RPG": 10}, 0.1) == pytest.approx((0.5 + volume) / 2)  # story share is larger
+
+
+def test_achievement_share_stands_in_for_completion_without_a_main_story() -> None:
+    volume = 1 - math.exp(-10 / 40)
+    assert taste_weight(10, None, {"RPG": 10}, 0.8) == pytest.approx((0.8 + volume) / 2)
+
+
+def test_open_ended_games_ignore_the_achievement_share() -> None:
+    volume = 1 - math.exp(-10 / 40)
+    assert taste_weight(10, None, {"Multiplayer": 10}, 1.0) == pytest.approx(volume)
