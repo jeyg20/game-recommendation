@@ -229,3 +229,13 @@ def test_get_game_hltb_tells_a_failure_from_a_miss(answer: object, monkeypatch: 
     assert asyncio.run(hltb.get_game_hltb("X", raise_on_failure=True)) is None
     FakeHltb.answer = [SimpleNamespace(similarity=0.4, main_story=3.0), SimpleNamespace(similarity=0.9, main_story=9.0)]
     assert getattr(asyncio.run(hltb.get_game_hltb("X", raise_on_failure=True)), "main_story", None) == 9.0
+
+
+def test_cli_toolbar_shows_the_noted_limits(monkeypatch: pytest.MonkeyPatch) -> None:
+    from src import cli
+
+    monkeypatch.setattr(cli.ui, "width", lambda: 200)
+    assert "max hours" not in cli.toolbar()
+    tools.note_request(max_hours=10, max_price_usd=19.99)
+    bar = cli.toolbar()
+    assert "max hours: 10" in bar and "max $19.99" in bar

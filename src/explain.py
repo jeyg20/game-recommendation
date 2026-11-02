@@ -3,14 +3,15 @@ owned games that put those tags in the profile.
 
 The score is dot / (|profile| * |candidate|), and the dot product is a sum over tags, so each tag's term divided by
 the same two norms is its exact contribution: the contributions add up to the score. The library profile is
-sum(weight * tag_vector(game)), so each owned game's part of a tag is its own term of that sum.
+sum(weight * tag_vector(game)) with tools.library_weights' weights, so each owned game's part of a tag is its own
+term of that sum. An abandoned game's term is negative: it pulled the tag down, so it's never named as a reason.
 """
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import TypedDict
 
 from src.library import LibraryGame
-from src.tag_profile import DfTable, TagVector, cosine, norm, tag_vector, taste_weight
+from src.tag_profile import DfTable, TagVector, cosine, norm, tag_vector
 
 TOP_TAGS = 8  # tags listed with their contribution
 TRACED_TAGS = 3  # of those, how many get traced back to owned games
@@ -44,17 +45,20 @@ def contributions(candidate: TagVector, profile: TagVector) -> dict[str, float]:
     return {tag: value * profile[tag] / denominator for tag, value in candidate.items() if tag in profile}
 
 
-def game_shares(tag: str, library_games: Iterable[LibraryGame], df_table: DfTable) -> list[tuple[LibraryGame, float]]:
-    """(game, weight * tag_vector(game)[tag]) for owned games carrying the tag, biggest first.
+def game_shares(
+    tag: str, library_games: Iterable[LibraryGame], df_table: DfTable, weights: Mapping[int, float]
+) -> list[tuple[LibraryGame, float]]:
+    """(game, weight * tag_vector(game)[tag]) for owned games carrying the tag that added to it, biggest first.
 
-    The same weight library_profile uses, so these are the terms the profile's value for the tag is the sum of.
+    `weights` (appid -> weight) are the ones the profile was built with, so these are the terms the profile's value
+    for the tag is the sum of. Negative terms (abandoned games) are left out.
     """
     shares: list[tuple[LibraryGame, float]] = []
     for game in library_games:
         tags = game["tags"] or {}
-        if tag not in tags:
+        if tag not in tags or game["appid"] not in weights:
             continue
-        share = taste_weight(game["playtime_hours"], game["main_story_hours"], tags) * tag_vector(tags, df_table)[tag]
+        share = weights[game["appid"]] * tag_vector(tags, df_table)[tag]
         if share > 0:
             shares.append((game, share))
     shares.sort(key=lambda pair: pair[1], reverse=True)
@@ -62,9 +66,16 @@ def game_shares(tag: str, library_games: Iterable[LibraryGame], df_table: DfTabl
 
 
 def explain(
-    candidate_tags: dict[str, int], profile: TagVector, df_table: DfTable, library_games: Iterable[LibraryGame]
+    candidate_tags: dict[str, int],
+    profile: TagVector,
+    df_table: DfTable,
+    library_games: Iterable[LibraryGame],
+    weights: Mapping[int, float],
 ) -> Explanation:
-    """The score of a game with these tags against `profile`, the tags behind it and the owned games behind those."""
+    """The score of a game with these tags against `profile`, the tags behind it and the owned games behind those.
+
+    `weights` are the owned games' weights in the library profile (tools.library_weights).
+    """
     candidate = tag_vector(candidate_tags, df_table)
     parts = contributions(candidate, profile)
     score = cosine(profile, norm(profile), candidate)
@@ -74,7 +85,7 @@ def explain(
     games = [game for game in library_games if game["tags"]]
     played: dict[int, PlayedGame] = {}  # appid -> entry, in order of first appearance
     for tag in top[:TRACED_TAGS]:
-        for game, _ in game_shares(tag, games, df_table)[:GAMES_PER_TAG]:
+        for game, _ in game_shares(tag, games, df_table, weights)[:GAMES_PER_TAG]:
             entry = played.setdefault(
                 game["appid"], {"name": game["name"], "hours": round(game["playtime_hours"], 1), "tags": []}
             )

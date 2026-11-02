@@ -14,6 +14,8 @@ from src.constraints import candidate_hours, known_hours, with_hours, within_len
 from src.explain import explain
 from src.feedback import (
     RATINGS,
+    Feedback,
+    FeedbackGame,
     Rating,
     empty_feedback,
     find_rated,
@@ -80,6 +82,7 @@ class State(TypedDict):
     games: dict[int, LibraryGame] | None
     df_table: DfTable | None
     profile: TagVector | None
+    weights: dict[int, float] | None  # appid -> its weight in `profile`, set with it (explain_pick traces by them)
     session: str  # set by the Assistant: the session being logged
     new_session_requested: bool  # set by start_new_session, acted on by the Assistant once the turn ends
     draft: RequestDraft  # reset with every new session
@@ -90,6 +93,7 @@ state: State = {
     "games": None,
     "df_table": None,
     "profile": None,
+    "weights": None,
     "session": "",
     "new_session_requested": False,
     "draft": empty_draft(),
@@ -104,13 +108,13 @@ def ensure_loaded() -> tuple[list[OwnedGame], dict[int, LibraryGame], DfTable, T
     if state["df_table"] is None:
         state["df_table"] = load_df_table()
     if state["profile"] is None:
-        state["profile"] = library_profile(
+        state["weights"] = library_weights(
             state["games"].values(),
-            state["df_table"],
             last_played_by_appid(state["player_games"]),
             recent_appids=played_recently(state["player_games"]),
             achievement_share=library.load_achievement_shares(state["player_games"]),
         )
+        state["profile"] = weighted_profile(state["games"].values(), state["weights"], state["df_table"])
         if not state["profile"]:
             raise RuntimeError("Empty taste profile: no owned game has both playtime and tags")
     return state["player_games"], state["games"], state["df_table"], state["profile"]
@@ -126,15 +130,14 @@ def played_recently(player_games: Iterable[OwnedGame]) -> set[int]:
     return {game["appid"] for game in player_games if game.get("playtime_2weeks", 0) > 0}
 
 
-def library_profile(
+def library_weights(
     games: Iterable[LibraryGame],
-    df_table: DfTable,
     last_played: Mapping[int, int] | None = None,
     now: float | None = None,
     recent_appids: Collection[int] = (),
     achievement_share: Mapping[int, float] | None = None,
-) -> TagVector:
-    """The taste profile of these owned games. Shared with the offline evaluation, which leaves one game out.
+) -> dict[int, float]:
+    """appid -> the weight each tagged owned game gets in the library profile (games without tags add nothing).
 
     Abandoned games (see is_abandoned) weigh -ABANDON_WEIGHT; without `last_played` none count as abandoned.
     Other games' weights fade with time since last played (recency_factor), except games in `recent_appids`
@@ -157,7 +160,27 @@ def library_profile(
         )
         return base if game["appid"] in recent_appids else base * recency_factor(played, now)
 
-    return build_profile([(weight(g), g["tags"] or {}) for g in games if g["tags"]], df_table)
+    return {g["appid"]: weight(g) for g in games if g["tags"]}
+
+
+def weighted_profile(games: Iterable[LibraryGame], weights: Mapping[int, float], df_table: DfTable) -> TagVector:
+    """sum(weight * tag_vector) over the games `weights` has a weight for."""
+    return build_profile([(weights[g["appid"]], g["tags"] or {}) for g in games if g["appid"] in weights], df_table)
+
+
+def library_profile(
+    games: Iterable[LibraryGame],
+    df_table: DfTable,
+    last_played: Mapping[int, int] | None = None,
+    now: float | None = None,
+    recent_appids: Collection[int] = (),
+    achievement_share: Mapping[int, float] | None = None,
+) -> TagVector:
+    """The taste profile of these owned games, weighted by library_weights. Shared with the offline evaluation,
+    which leaves one game out.
+    """
+    games = list(games)
+    return weighted_profile(games, library_weights(games, last_played, now, recent_appids, achievement_share), df_table)
 
 
 def rounded(profile: TagVector, tags: list[str]) -> dict[str, float]:
@@ -275,6 +298,80 @@ def get_taste_profile(top_n: int = 15) -> dict[str, object]:
     }
 
 
+class Steering(TypedDict):
+    """A request's steering of the library profile, and what went into it (for the tools to report)."""
+
+    taste: TagVector  # the steered profile; the library profile itself when nothing steers it
+    required: list[str]  # this request's and the draft's boost tags: must-haves
+    soft_boost: list[str]  # saved boost tags: standing tastes, weight only
+    avoid: list[str]
+    references: list[ReferenceGame]  # the like_games found on Steam
+    not_found: list[str]  # like_games with no Steam match
+    unknown_tags: dict[str, list[str]]  # boost/avoid tags that aren't Steam tags -> suggestions
+    liked: list[FeedbackGame]  # rated games steering toward their tags
+    disliked: list[FeedbackGame]  # rated games steering away from theirs
+    feedback: Feedback  # every rating, applied or not: disliked and dismissed games never come back either way
+
+
+def steer(
+    profile: TagVector,
+    df_table: DfTable,
+    like_games: list[str] | None = None,
+    boost_tags: list[str] | None = None,
+    avoid_tags: list[str] | None = None,
+    use_saved_preferences: bool = True,
+) -> Steering:
+    """The profile as recommend_games ranks against it: steered by saved preferences and ratings (unless
+    use_saved_preferences is off), this session's draft and this request's arguments. explain_pick shares it, so a
+    "why" is answered against the same profile the pick came from.
+    """
+    saved: Preferences = (
+        load_preferences() if use_saved_preferences else {"like_games": [], "boost_tags": [], "avoid_tags": []}
+    )
+    draft = state["draft"]
+
+    # this request's boosts are must-haves; saved ones are standing tastes, so they only add weight
+    required, unknown_required = canonical_tags(merge(draft["boost_tags"], boost_tags), df_table)
+    soft_boost, unknown_soft = canonical_tags(saved["boost_tags"], df_table)
+    boost = merge(soft_boost, required)
+    avoid, unknown_avoid = canonical_tags(merge(merge(saved["avoid_tags"], draft["avoid_tags"]), avoid_tags), df_table)
+    references: list[ReferenceGame] = []
+    not_found: list[str] = []
+    for name in merge(merge(saved["like_games"], draft["like_games"]), like_games):
+        found = find_game(name)
+        if found is None:
+            not_found.append(name)
+        else:
+            references.append(found)
+    # rated games: disliked and dismissed ones never come back; liked and disliked ones steer like saved preferences
+    feedback = load_feedback()
+    rated = feedback if use_saved_preferences else empty_feedback()
+    liked = list(rated["liked"].values())
+    disliked = list(rated["disliked"].values())
+    negatives = [tag_vector(game["tags"], df_table) for game in disliked]
+
+    steered = bool(references or liked or negatives or boost or avoid)
+    taste = (
+        adjust_profile(
+            profile, [tag_vector(game["tags"], df_table) for game in [*references, *liked]], boost, avoid, negatives
+        )
+        if steered
+        else profile
+    )
+    return {
+        "taste": taste,
+        "required": required,
+        "soft_boost": soft_boost,
+        "avoid": avoid,
+        "references": references,
+        "not_found": not_found,
+        "unknown_tags": unknown_soft | unknown_required | unknown_avoid,
+        "liked": liked,
+        "disliked": disliked,
+        "feedback": feedback,
+    }
+
+
 def recommend_games(
     like_games: list[str] | None = None,
     boost_tags: list[str] | None = None,
@@ -314,42 +411,19 @@ def recommend_games(
         Picks with no known price are dropped. Applies to wildcards too; backlog games are owned.
     """
     player_games, games, df_table, profile = ensure_loaded()
-    saved: Preferences = (
-        load_preferences() if use_saved_preferences else {"like_games": [], "boost_tags": [], "avoid_tags": []}
+    steering = steer(profile, df_table, like_games, boost_tags, avoid_tags, use_saved_preferences)
+    taste, required, soft_boost = steering["taste"], steering["required"], steering["soft_boost"]
+    avoid, references, liked, feedback = (
+        steering["avoid"],
+        steering["references"],
+        steering["liked"],
+        steering["feedback"],
     )
 
     draft = state["draft"]
     max_hours = max_hours if max_hours is not None else draft["max_hours"]
     max_price_usd = max_price_usd if max_price_usd is not None else draft["max_price_usd"]
 
-    # this request's boosts are must-haves; saved ones are standing tastes, so they only add weight
-    required, unknown_required = canonical_tags(merge(draft["boost_tags"], boost_tags), df_table)
-    soft_boost, unknown_soft = canonical_tags(saved["boost_tags"], df_table)
-    boost = merge(soft_boost, required)
-    unknown_boost = unknown_soft | unknown_required
-    avoid, unknown_avoid = canonical_tags(merge(merge(saved["avoid_tags"], draft["avoid_tags"]), avoid_tags), df_table)
-    references: list[ReferenceGame] = []
-    not_found: list[str] = []
-    for name in merge(merge(saved["like_games"], draft["like_games"]), like_games):
-        found = find_game(name)
-        if found is None:
-            not_found.append(name)
-        else:
-            references.append(found)
-    # rated games: disliked and dismissed ones never come back; liked and disliked ones steer like saved preferences
-    feedback = load_feedback()
-    steering = feedback if use_saved_preferences else empty_feedback()
-    liked = list(steering["liked"].values())
-    negatives = [tag_vector(game["tags"], df_table) for game in steering["disliked"].values()]
-
-    steered = bool(references or liked or negatives or boost or avoid)
-    taste = (
-        adjust_profile(
-            profile, [tag_vector(game["tags"], df_table) for game in [*references, *liked]], boost, avoid, negatives
-        )
-        if steered
-        else profile
-    )
     excluded = (
         {game["appid"] for game in player_games}
         | {game["appid"] for game in [*references, *liked]}
@@ -380,7 +454,7 @@ def recommend_games(
                 {
                     "feedback_applied": {
                         "liked": len(liked),
-                        "disliked": len(negatives),
+                        "disliked": len(steering["disliked"]),
                         "not_interested": len(feedback["not_interested"]),
                     }
                 }
@@ -398,10 +472,10 @@ def recommend_games(
         result["boost_tags_not_enforced"] = ranked["requirement_unenforced"]
     if ranked["stale_pools"]:
         result["stale_pools"] = ranked["stale_pools"]
-    if not_found:
-        result["like_games_not_found"] = not_found
-    if unknown_boost or unknown_avoid:
-        result["unknown_tags_ignored"] = unknown_boost | unknown_avoid
+    if steering["not_found"]:
+        result["like_games_not_found"] = steering["not_found"]
+    if steering["unknown_tags"]:
+        result["unknown_tags_ignored"] = steering["unknown_tags"]
     if include_backlog:
         enforced = [tag for tag in required if tag not in ranked["requirement_unenforced"]]
         backlog = [
@@ -529,8 +603,8 @@ def refresh_library() -> dict[str, object]:
 def update_background_corpus(fetch_new_listings: bool = False) -> dict[str, object]:
     """Grow the Steam-wide tag corpus that decides how distinctive each tag is, then rebuild that table.
 
-    SLOW: always confirm with the player first. Without new listings it only retries failed fetches (minutes);
-    with new listings it pulls ~4,000 more games at 1 request/second (can take over an hour).
+    SLOW: always confirm with the player first. Without new listings it only retries failed and untagged fetches
+    (minutes); with new listings it pulls ~4,000 more games at 1 request/second (can take over an hour).
 
     Args:
       fetch_new_listings: Pull SteamSpy's popular-game listings for new games, not just retry failed ones.
@@ -655,27 +729,6 @@ def start_new_session() -> dict[str, object]:
     return {"closed_session": state["session"], "status": "a new session starts with the next prompt"}
 
 
-def noted_taste(profile: TagVector, df_table: DfTable) -> tuple[TagVector, dict[str, list[str]]]:
-    """The profile steered by saved preferences and this session's draft, as recommend_games steers it by default.
-
-    Returns the steered profile and what was applied. Kept apart from recommend_games so this task doesn't edit it.
-    """
-    saved = load_preferences()
-    draft = state["draft"]
-    required, _ = canonical_tags(draft["boost_tags"], df_table)
-    soft_boost, _ = canonical_tags(saved["boost_tags"], df_table)
-    boost = merge(soft_boost, required)
-    avoid, _ = canonical_tags(merge(saved["avoid_tags"], draft["avoid_tags"]), df_table)
-    references = [
-        found for name in merge(saved["like_games"], draft["like_games"]) if (found := find_game(name)) is not None
-    ]
-    applied = {"like_games": [ref["name"] for ref in references], "boost_tags": boost, "avoid_tags": avoid}
-    if not (references or boost or avoid):
-        return profile, applied
-    taste = adjust_profile(profile, [tag_vector(ref["tags"], df_table) for ref in references], boost, avoid)
-    return taste, applied
-
-
 def explain_pick(name: str, steered: bool = False) -> dict[str, object]:
     """Why a game fits the player's taste profile: which tags drove its score, how much each added, and which of the
     player's own games put those tags in the profile. This is the fit to their profile, not a quality judgement.
@@ -694,8 +747,23 @@ def explain_pick(name: str, steered: bool = False) -> dict[str, object]:
         return {"error": f"No Steam game with tags found for {name!r}"}
     result: dict[str, object] = {}
     if steered:
-        profile, result["steered_by"] = noted_taste(profile, df_table)
-    why = explain(found["tags"], profile, df_table, games.values())
+        steering = steer(profile, df_table)
+        profile = steering["taste"]
+        result["steered_by"] = {
+            "like_games": [ref["name"] for ref in steering["references"]],
+            "boost_tags": merge(steering["soft_boost"], steering["required"]),
+            "avoid_tags": steering["avoid"],
+            # only once the player has rated something, as in recommend_games
+            **(
+                {
+                    "liked_games": [game["name"] for game in steering["liked"]],
+                    "disliked_games": [game["name"] for game in steering["disliked"]],
+                }
+                if steering["liked"] or steering["disliked"]
+                else {}
+            ),
+        }
+    why = explain(found["tags"], profile, df_table, games.values(), state["weights"] or {})
     owned = games.get(found["appid"])
     return {
         "name": found["name"],

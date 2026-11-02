@@ -14,8 +14,9 @@ from src.tag_profile import (
     DfTable,
     TagVector,
     cosine,
-    is_excluded,
+    fetched_status,
     load_cache_status,
+    needs_fetch,
     norm,
     tag_vector,
 )
@@ -53,9 +54,17 @@ class Wildcard(Recommendation):
     via_tag: str  # the adjacent profile tag whose pool it came from
 
 
-# tags whose fetch came back empty in this process: SteamSpy keeps returning [] for some big tags, so asking again
-# on every call only costs a request each; their cached pool serves the rest of the run
-_empty_this_run: set[str] = set()
+EMPTY_RETRY_HOURS = 6  # an empty tag pool is asked for again after this long, even in the same process
+
+# tag -> time.time() its fetch came back empty in this process: SteamSpy keeps returning [] for some big tags, so
+# asking again on every call only costs a request each; their cached pool serves until EMPTY_RETRY_HOURS have passed
+_empty_this_run: dict[str, float] = {}
+
+
+def came_back_empty(tag: str) -> bool:
+    """The tag's pool came back empty in this process less than EMPTY_RETRY_HOURS ago."""
+    at = _empty_this_run.get(tag)
+    return at is not None and time.time() - at < EMPTY_RETRY_HOURS * 3600
 
 
 def fetch_tag_pools(tags: list[str]) -> tuple[dict[str, dict[str, GameSummary]], dict[str, str]]:
@@ -73,12 +82,12 @@ def fetch_tag_pools(tags: list[str]) -> tuple[dict[str, dict[str, GameSummary]],
     stale: dict[str, str] = {}
     for n, tag in enumerate(tags, start=1):
         cached = cache.get(tag)
+        empty = came_back_empty(tag)
         if cached is not None and (
-            tag in _empty_this_run
-            or (date.today() - date.fromisoformat(cached["fetched_at"])).days < TAG_POOL_MAX_AGE_DAYS
+            empty or (date.today() - date.fromisoformat(cached["fetched_at"])).days < TAG_POOL_MAX_AGE_DAYS
         ):
             pools[tag] = cached["games"]
-            if tag in _empty_this_run:
+            if empty:
                 stale[tag] = cached["fetched_at"]
             continue
 
@@ -87,7 +96,7 @@ def fetch_tag_pools(tags: list[str]) -> tuple[dict[str, dict[str, GameSummary]],
         time.sleep(1)
         if not games:  # not cached: a failed or empty listing is a miss, and caching it would repeat it all day
             if games is not None:
-                _empty_this_run.add(tag)
+                _empty_this_run[tag] = time.time()
             reason = "failed" if games is None else "returned nothing"
             if cached is not None:  # the cache entry stays as it was, so a later good fetch still replaces it
                 status.say(
@@ -100,7 +109,7 @@ def fetch_tag_pools(tags: list[str]) -> tuple[dict[str, dict[str, GameSummary]],
             else:
                 status.say(style(f"  ! tag pool {tag!r} is empty (not in SteamSpy's vocabulary?)", "yellow"))
             continue
-        _empty_this_run.discard(tag)
+        _empty_this_run.pop(tag, None)
         pools[tag] = games
         cache[tag] = {"fetched_at": date.today().isoformat(), "games": games}
         write_json(TAG_POOLS_PATH, cache)
@@ -158,8 +167,12 @@ def pick_finalists(
 def enrich_tags(appids: list[int]) -> dict[int, CorpusRecord]:
     """appid -> corpus record with full tags. Reuses the background corpus; misses are fetched and appended to it."""
     corpus = load_cache_status(STEAM_BACKGROUND_CORPUS) if STEAM_BACKGROUND_CORPUS.is_file() else {}
-    # a cached `excluded` game stays out without a refetch; a `failed` one gets another try
-    missing = [appid for appid in appids if appid not in corpus or corpus[appid]["status"] == "failed"]
+    # a `failed` game gets another try every call, an untagged one once a week; a non-game stays out
+    missing = [
+        appid
+        for appid in appids
+        if appid not in corpus or corpus[appid]["status"] == "failed" or needs_fetch(appid, corpus)
+    ]
     for n, appid in enumerate(missing, start=1):
         status.update(f"fetching tags for new candidates (~{len(missing) - n}s left)", n, len(missing))
         details = get_game_details(appid)
@@ -173,8 +186,7 @@ def enrich_tags(appids: list[int]) -> dict[int, CorpusRecord]:
         if details is not None:
             record["tags"] = details["tags"]
             record["genre"] = details["genre"]
-            excluded = not details["tags"] or is_excluded(details["genre"], details["tags"])
-            record["status"] = "excluded" if excluded else "ok"
+            record["status"] = fetched_status(details["genre"], details["tags"])
         corpus[appid] = record
         append_jsonl(STEAM_BACKGROUND_CORPUS, record)
         time.sleep(1)

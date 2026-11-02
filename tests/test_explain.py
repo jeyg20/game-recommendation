@@ -2,9 +2,10 @@ import pytest
 
 from src import tools
 from src.explain import explain
+from src.feedback import empty_feedback, save_feedback
 from src.library import LibraryGame
-from src.tag_profile import DfTable, cosine, norm, tag_vector
-from src.tools import ReferenceGame, library_profile
+from src.tag_profile import DfTable, adjust_profile, cosine, norm, tag_vector
+from src.tools import ReferenceGame, library_profile, library_weights
 
 
 def owned(appid: int, name: str, hours: float, tags: dict[str, int]) -> LibraryGame:
@@ -25,11 +26,12 @@ LIBRARY = [
     owned(3, "Portal", 10, {"Puzzle": 70, "Indie": 30}),
 ]
 CANDIDATE = {"Roguelike": 40, "Action": 30, "Shooter": 20, "Horror": 10}  # Horror: in no owned game
+WEIGHTS = library_weights(LIBRARY)
 
 
 def test_contributions_sum_to_the_score(df_table: DfTable) -> None:
     profile = library_profile(LIBRARY, df_table)
-    why = explain(CANDIDATE, profile, df_table, LIBRARY)
+    why = explain(CANDIDATE, profile, df_table, LIBRARY, WEIGHTS)
 
     assert why["score"] == pytest.approx(cosine(profile, norm(profile), tag_vector(CANDIDATE, df_table)), abs=1e-12)
     total = sum(part["contribution"] for part in why["tags"]) + why["other_tags"]
@@ -42,7 +44,7 @@ def test_contributions_sum_to_the_score(df_table: DfTable) -> None:
 
 def test_because_you_played_names_the_owned_games_behind_the_top_tags(df_table: DfTable) -> None:
     profile = library_profile(LIBRARY, df_table)
-    why = explain(CANDIDATE, profile, df_table, LIBRARY)
+    why = explain(CANDIDATE, profile, df_table, LIBRARY, WEIGHTS)
 
     top3 = [part["tag"] for part in why["tags"][:3]]
     assert set(top3) == {"Roguelike", "Action", "Shooter"}
@@ -55,7 +57,7 @@ def test_because_you_played_names_the_owned_games_behind_the_top_tags(df_table: 
 
 def test_no_shared_tags_explains_a_zero_score(df_table: DfTable) -> None:
     profile = library_profile(LIBRARY, df_table)
-    why = explain({"Horror": 10}, profile, df_table, LIBRARY)
+    why = explain({"Horror": 10}, profile, df_table, LIBRARY, WEIGHTS)
     assert why == {"score": 0.0, "tags": [], "other_tags": 0, "because_you_played": []}
 
 
@@ -66,6 +68,7 @@ def loaded_with(df_table: DfTable, monkeypatch: pytest.MonkeyPatch, found: Refer
         "games": games,
         "df_table": df_table,
         "profile": library_profile(games.values(), df_table),
+        "weights": library_weights(games.values()),
     }
     monkeypatch.setattr(tools, "find_game", lambda name: found)
 
@@ -89,6 +92,53 @@ def test_explain_pick_steered_uses_the_noted_draft(df_table: DfTable, monkeypatc
     assert "Co-op" not in [part["tag"] for part in plain["tags"]]  # type: ignore[union-attr]
     assert "Co-op" in [part["tag"] for part in steered["tags"]]  # type: ignore[union-attr]
     assert steered["fit_score"] > plain["fit_score"]  # type: ignore[operator]
+
+
+NOW = 1_800_000_000.0
+DAY = 86_400
+
+
+def test_because_you_played_uses_the_profile_weights_and_skips_abandoned_games(df_table: DfTable) -> None:
+    # Hades: 1.5 h, last played a year ago: abandoned, so it counts against Roguelike instead of for it
+    library = [*LIBRARY, owned(4, "Hades", 1.5, {"Roguelike": 90, "Action": 10})]
+    last_played = {1: int(NOW), 2: int(NOW), 3: int(NOW), 4: int(NOW - 365 * DAY)}
+    weights = library_weights(library, last_played, NOW)
+    profile = library_profile(library, df_table, last_played, NOW)
+    why = explain(CANDIDATE, profile, df_table, library, weights)
+
+    assert weights[4] == -tools.ABANDON_WEIGHT
+    assert "Hades" not in [game["name"] for game in why["because_you_played"]]
+    # the traced games' terms are the profile's own: they add up to its value for the tag
+    roguelike = sum(weights[g["appid"]] * tag_vector(g["tags"] or {}, df_table).get("Roguelike", 0) for g in library)
+    assert roguelike == pytest.approx(profile["Roguelike"])
+
+
+def test_explain_pick_steered_applies_ratings_like_recommend_games(
+    df_table: DfTable, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    candidate = {"Shooter": 80, "Co-op": 20}
+    loaded_with(df_table, monkeypatch, {"appid": 9, "name": "Shooty", "tags": candidate})
+    liked = {"appid": 7, "name": "Rust", "tags": {"Shooter": 50, "Co-op": 30}, "at": ""}
+    disliked = {"appid": 8, "name": "Doom 3", "tags": {"Shooter": 40, "Horror": 60}, "at": ""}
+    save_feedback(empty_feedback() | {"liked": {"7": liked}, "disliked": {"8": disliked}})
+    result = tools.explain_pick("shooty", steered=True)
+
+    steered = adjust_profile(
+        tools.state["profile"] or {},
+        [tag_vector(liked["tags"], df_table)],
+        [],
+        [],
+        [tag_vector(disliked["tags"], df_table)],
+    )
+    assert result["fit_score"] == round(cosine(steered, norm(steered), tag_vector(candidate, df_table)), 3)
+    assert result["steered_by"] == {
+        "like_games": [],
+        "boost_tags": [],
+        "avoid_tags": [],
+        "liked_games": ["Rust"],
+        "disliked_games": ["Doom 3"],
+    }
+    assert tools.steer(tools.state["profile"] or {}, df_table)["taste"] == steered  # what recommend_games ranks by
 
 
 def test_explain_pick_unknown_game(df_table: DfTable, monkeypatch: pytest.MonkeyPatch) -> None:

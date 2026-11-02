@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 from typing import cast
 
 import pytest
@@ -15,8 +15,8 @@ from src.recommend import (
     pick_finalists,
 )
 from src.steamspy import GameSummary
-from src.storage import read_json, write_json
-from src.tag_profile import CorpusRecord, DfTable
+from src.storage import append_jsonl, read_json, write_json
+from src.tag_profile import UNTAGGED_RETRY_DAYS, CorpusRecord, DfTable, load_cache_status, needs_fetch
 
 
 def game(appid: int, positive: int = 900, negative: int = 100, name: str = "") -> GameSummary:
@@ -212,7 +212,7 @@ def steamspy_tags(monkeypatch: pytest.MonkeyPatch) -> tuple[dict[str, dict[str, 
 
     monkeypatch.setattr(rec, "get_games_by_tag", get_games_by_tag)
     monkeypatch.setattr(rec.time, "sleep", lambda seconds: None)
-    monkeypatch.setattr(rec, "_empty_this_run", set())
+    monkeypatch.setattr(rec, "_empty_this_run", {})
     return served, requested
 
 
@@ -277,3 +277,73 @@ def test_fetch_tag_pools_replaces_a_stale_entry_once_steamspy_answers(
     cache_pool("Open World", OLD, OLD_POOL)
     assert rec.fetch_tag_pools(["Open World"]) == ({"Open World": new_pool}, {})
     assert read_json(rec.TAG_POOLS_PATH)["Open World"] == {"fetched_at": date.today().isoformat(), "games": new_pool}
+
+
+def days_old(days: int) -> str:
+    return (date.today() - timedelta(days=days)).isoformat()
+
+
+def corpus_record(
+    appid: int, status: str, fetched_at: str, genre: str = "Action", tags: dict[str, int] | None = None
+) -> CorpusRecord:
+    record = {"appid": appid, "genre": genre, "tags": tags or {}, "fetched_at": fetched_at, "status": status}
+    return cast(CorpusRecord, record)
+
+
+def test_enrich_tags_refetches_untagged_games_weekly_and_non_games_never(monkeypatch: pytest.MonkeyPatch) -> None:
+    for record in [
+        corpus_record(1, "untagged", days_old(8)),
+        corpus_record(2, "untagged", days_old(2)),
+        corpus_record(3, "excluded", days_old(30)),  # saved before `untagged` existed: an untagged game
+        corpus_record(4, "excluded", days_old(30), genre="Utilities"),  # a non-game: final
+        corpus_record(5, "excluded", days_old(30), tags={"Software": 90, "Utilities": 10}),
+    ]:
+        append_jsonl(rec.STEAM_BACKGROUND_CORPUS, record)
+    asked: list[int] = []
+
+    def get_game_details(appid: int) -> dict[str, object]:
+        asked.append(appid)
+        return {"genre": "Action", "tags": {"RPG": 50, "Action": 30}}
+
+    monkeypatch.setattr(rec, "get_game_details", get_game_details)
+    monkeypatch.setattr(rec.time, "sleep", lambda seconds: None)
+    records = rec.enrich_tags([1, 2, 3, 4, 5])
+
+    assert asked == [1, 3]
+    assert set(records) == {1, 3}  # tagged now, so rankable
+    assert rec.enrich_tags([1, 2, 3, 4, 5]).keys() == {1, 3} and asked == [1, 3]  # and final
+
+
+def test_a_game_steamspy_has_no_tags_for_is_saved_untagged(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(rec, "get_game_details", lambda appid: {"genre": "Action", "tags": {}})
+    monkeypatch.setattr(rec.time, "sleep", lambda seconds: None)
+    assert rec.enrich_tags([1]) == {}
+    assert load_cache_status(rec.STEAM_BACKGROUND_CORPUS)[1]["status"] == "untagged"
+
+
+def test_corpus_build_retries_untagged_records_after_a_week() -> None:
+    corpus = {
+        1: corpus_record(1, "untagged", days_old(UNTAGGED_RETRY_DAYS)),
+        2: corpus_record(2, "untagged", days_old(UNTAGGED_RETRY_DAYS - 1)),
+        3: corpus_record(3, "excluded", days_old(365), genre="Utilities"),
+        4: corpus_record(4, "excluded", days_old(UNTAGGED_RETRY_DAYS)),  # legacy untagged
+        5: corpus_record(5, "ok", days_old(365), tags={"RPG": 1}),
+    }
+    assert [appid for appid in corpus if needs_fetch(appid, corpus)] == [1, 4]
+
+
+def test_fetch_tag_pools_asks_again_for_an_empty_tag_after_the_retry_window(
+    steamspy_tags: tuple[dict[str, dict[str, GameSummary] | None], list[str]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, requested = steamspy_tags
+    clock = [1_800_000_000.0]
+    monkeypatch.setattr(rec.time, "time", lambda: clock[0])
+    cache_pool("Open World", OLD, OLD_POOL)
+    rec.fetch_tag_pools(["Open World"])
+    clock[0] += rec.EMPTY_RETRY_HOURS * 3600 - 1
+    rec.fetch_tag_pools(["Open World"])
+    assert requested == ["Open World"]
+    clock[0] += 1
+    pools, stale = rec.fetch_tag_pools(["Open World"])
+    assert requested == ["Open World", "Open World"]
+    assert pools == {"Open World": OLD_POOL} and stale == {"Open World": OLD}  # still empty: the old pool serves

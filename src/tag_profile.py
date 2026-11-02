@@ -25,11 +25,12 @@ class CorpusRecord(TypedDict):
     appid: int
     genre: str
     tags: dict[str, int]
-    fetched_at: str  # ISO date, drives the failed-record retry window
-    status: Literal["ok", "failed", "excluded"]
+    fetched_at: str  # ISO date, drives the failed and untagged retry windows
+    status: Literal["ok", "failed", "excluded", "untagged"]  # untagged: SteamSpy had no tags for it yet
 
 
 RETRY_FAILED_AFTER_DAYS = 7
+UNTAGGED_RETRY_DAYS = 7  # SteamSpy tags new releases eventually; asking on every call would cost a request each
 EXCLUDED_GENRES = {"utilities", "design & illustration", "video production", "animation & modeling"}
 EXCLUDED_TAGS = {"software", "utilities", "benchmark", "game development", "documentary", "movie", "feature film"}
 TOP_TAGS_CHECKED = 2
@@ -43,12 +44,28 @@ def split_genres(genre: str) -> list[str]:
 def is_excluded(genre: str, tags: dict[str, int]) -> bool:
     """Non-games (software genres, or tools/docs by top tags). The one rule for both the corpus and the owned library.
 
-    Untagged games pass: SteamSpy has no tags yet for new releases. The corpus drops them separately.
+    Untagged games pass: SteamSpy has no tags yet for new releases. The corpus saves them as `untagged`.
     """
     genres = {g.lower() for g in split_genres(genre)}
 
     top_tags = sorted(tags, key=tags.__getitem__, reverse=True)[:TOP_TAGS_CHECKED]
     return any(tag.lower() in EXCLUDED_TAGS for tag in top_tags) or bool(genres & EXCLUDED_GENRES)
+
+
+def fetched_status(genre: str, tags: dict[str, int]) -> Literal["ok", "excluded", "untagged"]:
+    """The corpus status of a successful SteamSpy fetch. Non-games are final; a game without tags may get them."""
+    if is_excluded(genre, tags):
+        return "excluded"
+    return "ok" if tags else "untagged"
+
+
+def is_untagged(record: CorpusRecord) -> bool:
+    """Saved without tags. Records from before `untagged` existed were saved as `excluded`: a non-game genre tells
+    the two apart.
+    """
+    if record["status"] == "untagged":
+        return True
+    return record["status"] == "excluded" and not record["tags"] and not is_excluded(record["genre"], {})
 
 
 def load_cache_status(path: Path) -> dict[int, CorpusRecord]:
@@ -61,16 +78,21 @@ def load_cache_status(path: Path) -> dict[int, CorpusRecord]:
 
 
 def needs_fetch(appid: int, corpus: dict[int, CorpusRecord]) -> bool:
-    """Fetch if never cached, or if it failed and the retry window has passed. `ok` records are final."""
+    """Fetch if never cached, or if it failed or had no tags and that retry window has passed.
+
+    `ok` records and non-games (`excluded`) are final.
+    """
     record = corpus.get(appid)
     if record is None:
         return True
-    if record["status"] == "ok":
-        return False
-    if record["status"] == "excluded":
+    if record["status"] == "failed":
+        retry_days = RETRY_FAILED_AFTER_DAYS
+    elif is_untagged(record):
+        retry_days = UNTAGGED_RETRY_DAYS
+    else:
         return False
     age = date.today() - date.fromisoformat(record["fetched_at"])
-    return age.days >= RETRY_FAILED_AFTER_DAYS
+    return age.days >= retry_days
 
 
 class DfTable(TypedDict):
@@ -179,12 +201,8 @@ def build_steam_collection(fetch_pages: bool | None = None) -> DfTable:
         if game_details is not None:
             game_corpus["tags"] = game_details["tags"]
             game_corpus["genre"] = game_details["genre"]
-
-            # untagged games add nothing to df, so the corpus drops them on top of is_excluded
-            if not game_details["tags"] or is_excluded(game_details["genre"], game_details["tags"]):
-                game_corpus["status"] = "excluded"
-            else:
-                game_corpus["status"] = "ok"
+            # only `ok` records count towards df: untagged games add nothing to it
+            game_corpus["status"] = fetched_status(game_details["genre"], game_details["tags"])
 
         corpus[game_id] = game_corpus
         append_jsonl(STEAM_BACKGROUND_CORPUS, game_corpus)

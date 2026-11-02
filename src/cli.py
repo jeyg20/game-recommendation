@@ -161,6 +161,10 @@ def toolbar() -> str:
     for key, label in (("like_games", "like"), ("boost_tags", "must have"), ("avoid_tags", "avoid"), ("notes", "note")):
         if draft[key]:
             parts.append(f"{label}: {', '.join(draft[key])}")
+    if draft["max_hours"] is not None:
+        parts.append(f"max hours: {draft['max_hours']:g}")
+    if draft["max_price_usd"] is not None:
+        parts.append(f"max ${draft['max_price_usd']:g}")
     if len(parts) == 1:
         parts.append("nothing noted yet")
     return ui.truncate("  ·  ".join(parts), ui.width() - 1)
