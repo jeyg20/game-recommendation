@@ -51,8 +51,8 @@ Gemini (`src/ai_agent.py`) reads your prompt and calls the tools in `src/tools.p
 | Tool | What it does |
 | --- | --- |
 | `get_taste_profile` | Strongest profile tags, most-played and recently played games, saved preferences |
-| `recommend_games` | Ranks unowned games, optionally steered: `like_games` ("more like X"), `boost_tags`, `avoid_tags`; plus a few `wildcards` from just outside your usual tags |
-| `note_request` | Records what you want (games, tags, notes) over several messages, without recommending yet |
+| `recommend_games` | Ranks unowned games, optionally steered: `like_games` ("more like X"), `boost_tags`, `avoid_tags`; plus a few `wildcards` from just outside your usual tags; `max_hours` / `max_price_usd` limits |
+| `note_request` | Records what you want (games, tags, notes, length and price limits) over several messages, without recommending yet |
 | `look_up_game` | One game's tags, whether you own it, and how well it fits your profile |
 | `update_preferences` | Saves steers that apply to every future request (`data/preferences.json`) |
 | `refresh_library` | Refetches the Steam library, tags and HLTB times; reports new games and new playtime |
@@ -95,6 +95,16 @@ Friends: `friends_games` collects the games your Steam friends own (at least `mi
 tags the 60 most-owned, and scores them against the profile (`boost_tags` must-haves and `avoid_tags` work as in
 `recommend_games`). Friends with private libraries are skipped and counted. The first call of the day makes one
 request per friend at 1 per second; friends' names and libraries are cached for a day in `data/raw/friends.json`.
+
+Limits: `max_price_usd` keeps picks whose `price_usd` (what you'd pay now, after any discount) is at most that;
+picks with no known price are dropped. `max_hours` is a HowLongToBeat main-story limit. Candidates have no HLTB time
+until then, so after ranking and the price filter only the best `3 * limit` picks are looked up, one at a time, and
+cached by appid in `data/candidates/hltb_candidates.json` for 30 days (misses too). Picks known to fit come first,
+with `main_story_hours`; picks HLTB has no time for follow, flagged `length_unknown`; longer ones and the unchecked
+tail are dropped, so there can be fewer than `limit`. Both apply to wildcards (looked up the same way) and
+`max_hours` to the backlog (from the library's HLTB times); price doesn't, the backlog is owned. Limits noted with
+`note_request` apply for the session unless a call passes its own; `remove=["max_hours"]` drops one. With no limits
+the output is unchanged.
 
 **When it recommends.** Only when you ask for picks ("recommend", "what should I play", "that's it") or send a
 complete request in one message. While you're still describing what you want, it notes each detail with

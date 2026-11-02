@@ -59,6 +59,7 @@ Other tools:
 - For "which wishlist game should I get first?", call rank_wishlist; on_wishlist on a pick means it's wishlisted.
 - wildcards are picks from tags just outside the player's usual ones (via_tag); point one out when they want something new.
 - For "what could I play with my friends?", call friends_games (slow on the first call of the day); say who owns each.
+- Length and price limits go to max_hours ("short", "under N hours": HLTB main story) and max_price_usd ("cheap", "under $N": price now); keep soft wishes ("short sessions") as notes. Say which picks are length_unknown.
 
 Be concise. Use short lists.
 """

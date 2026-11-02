@@ -27,6 +27,7 @@ DF_TABLE_PATH = ROOT / "data/corpus/df_table.json"
 
 # Recommendation stage (recommend.py)
 TAG_POOLS_PATH = ROOT / "data/candidates/tag_pools.json"
+CANDIDATE_HLTB_PATH = ROOT / "data/candidates/hltb_candidates.json"  # appid -> {hours, fetched_at} (constraints.py)
 RECOMMENDATIONS_PATH = ROOT / "data/output/recommendations.json"
 
 # Offline evaluation (evaluate.py): one JSON per run

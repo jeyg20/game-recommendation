@@ -142,6 +142,7 @@ def bar(score: float) -> str:
 
 
 PRICE_CELLS = 12  # "-50% $149.99"
+LENGTH_CELLS = 6  # "120.5h" HLTB main story, "?" when HLTB has none
 
 
 def price(pick: Mapping[str, object]) -> str:
@@ -156,13 +157,16 @@ def price(pick: Mapping[str, object]) -> str:
 def table(
     title: str, picks: Sequence[Mapping[str, object]], extra_header: str, extra: str, with_price: bool = False
 ) -> str:
-    """One pick per row: rank, name, fit bar, an extra column (rating or hours), price if asked, matched tags."""
+    """One pick per row: rank, name, fit bar, an extra column (rating or hours), price if asked, HLTB length when the
+    picks were checked against a length limit, matched tags."""
     if not picks:
         return ""
     size = width()
     name_size = min(max(len(str(pick["name"])) for pick in picks), 34)
     price_size = PRICE_CELLS + 2 if with_price else 0
-    fixed = 2 + 3 + 2 + name_size + 2 + BAR_CELLS + 5 + 2 + 5 + 2 + price_size
+    with_length = any("main_story_hours" in pick or "length_unknown" in pick for pick in picks)
+    length_size = LENGTH_CELLS + 2 if with_length else 0
+    fixed = 2 + 3 + 2 + name_size + 2 + BAR_CELLS + 5 + 2 + 5 + 2 + price_size + length_size
     why_size = max(size - fixed, 12)
 
     rows = [
@@ -171,6 +175,7 @@ def table(
         style(
             f"  {'#':>3}  {'Game':<{name_size}}  {'Fit':<{BAR_CELLS + 5}}  {extra_header:>5}  "
             + (f"{'Price':>{PRICE_CELLS}}  " if with_price else "")
+            + (f"{'Story':>{LENGTH_CELLS}}  " if with_length else "")
             + "Why",
             "grey",
         ),
@@ -187,8 +192,11 @@ def table(
         fit = bar(float(score)) if isinstance(score, int | float) else "-"
         name = pad(style(truncate(str(pick["name"]), name_size), "bold"), name_size)
         cost = f"{price(pick):>{PRICE_CELLS}}  " if with_price else ""
+        story = pick.get("main_story_hours")
+        length = f"{(f'{story}h' if story is not None else '?'):>{LENGTH_CELLS}}  " if with_length else ""
         rows.append(
-            f"  {style(f'{rank:>3}', 'grey')}  {name}  {fit}  {cell:>5}  {cost}{style(truncate(tags, why_size), 'grey')}"
+            f"  {style(f'{rank:>3}', 'grey')}  {name}  {fit}  {cell:>5}  {cost}{length}"
+            f"{style(truncate(tags, why_size), 'grey')}"
         )
     return "\n".join(rows)
 
@@ -205,6 +213,10 @@ def steer_summary(applied: Mapping[str, object]) -> str:
         values = applied.get(key)
         if isinstance(values, list) and values:
             parts.append(f"{label}: {', '.join(str(value) for value in values)}")
+    if (hours := applied.get("max_hours")) is not None:
+        parts.append(f"story up to {hours}h")
+    if (usd := applied.get("max_price_usd")) is not None:
+        parts.append(f"up to ${usd}")
     return style("  steered by  " + "  ·  ".join(parts), "grey") if parts else ""
 
 

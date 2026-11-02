@@ -151,6 +151,8 @@ def test_note_request_accumulates_and_removes(df_table: DfTable) -> None:
         "boost_tags": ["Roguelike"],
         "avoid_tags": ["Horror"],
         "notes": [],
+        "max_hours": None,
+        "max_price_usd": None,
     }
 
 

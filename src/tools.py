@@ -10,6 +10,7 @@ from collections.abc import Collection, Iterable, Mapping, Sequence
 from typing import TypedDict, cast
 
 from src import friends, library, steam_api, steamspy, wishlist
+from src.constraints import candidate_hours, known_hours, with_hours, within_length, within_price
 from src.explain import explain
 from src.feedback import (
     RATINGS,
@@ -66,10 +67,12 @@ class RequestDraft(TypedDict):
     boost_tags: list[str]
     avoid_tags: list[str]
     notes: list[str]  # anything the ranking can't use directly ("short sessions", "to play with my partner")
+    max_hours: float | None  # HLTB main story limit (constraints.py)
+    max_price_usd: float | None  # current price limit, after any discount
 
 
 def empty_draft() -> RequestDraft:
-    return {"like_games": [], "boost_tags": [], "avoid_tags": [], "notes": []}
+    return {"like_games": [], "boost_tags": [], "avoid_tags": [], "notes": [], "max_hours": None, "max_price_usd": None}
 
 
 class State(TypedDict):
@@ -281,6 +284,8 @@ def recommend_games(
     use_saved_preferences: bool = True,
     on_sale_only: bool = False,
     include_wildcards: bool = True,
+    max_hours: float | None = None,
+    max_price_usd: float | None = None,
 ) -> dict[str, object]:
     """Rank games the player doesn't own against their taste profile, optionally steered for this request.
 
@@ -303,6 +308,10 @@ def recommend_games(
         Applies to wildcards too.
       include_wildcards: Also return a few wildcards: well-fitting games from tags just outside the player's usual
         ones, each with the via_tag it came from. Left out when boost_tags are required.
+      max_hours: Longest HowLongToBeat main story allowed ("under 10 hours", "something short"). Picks with no HLTB
+        time are kept after the ones known to fit, flagged length_unknown. Applies to backlog and wildcards too.
+      max_price_usd: Most the player would pay now, in US dollars after any discount ("nothing over $20", "cheap").
+        Picks with no known price are dropped. Applies to wildcards too; backlog games are owned.
     """
     player_games, games, df_table, profile = ensure_loaded()
     saved: Preferences = (
@@ -310,6 +319,8 @@ def recommend_games(
     )
 
     draft = state["draft"]
+    max_hours = max_hours if max_hours is not None else draft["max_hours"]
+    max_price_usd = max_price_usd if max_price_usd is not None else draft["max_price_usd"]
 
     # this request's boosts are must-haves; saved ones are standing tastes, so they only add weight
     required, unknown_required = canonical_tags(merge(draft["boost_tags"], boost_tags), df_table)
@@ -348,6 +359,9 @@ def recommend_games(
     recommendations = ranked["recommendations"]
     if on_sale_only:
         recommendations = [rec for rec in recommendations if (rec["discount_percent"] or 0) > 0]
+    recommendations, hours = within_length(
+        within_price(recommendations, max_price_usd), limit, max_hours, candidate_hours
+    )
 
     wishlisted = wishlist.wishlisted_appids()
     result: dict[str, object] = {
@@ -358,6 +372,9 @@ def recommend_games(
             "avoid_tags": avoid,
             "from_saved_preferences": use_saved_preferences,
             "player_notes": draft["notes"],
+            # only when set, so output without limits is unchanged
+            **({"max_hours": max_hours} if max_hours is not None else {}),
+            **({"max_price_usd": max_price_usd} if max_price_usd is not None else {}),
             # only once the player has rated something, so output without feedback is unchanged
             **(
                 {
@@ -373,7 +390,7 @@ def recommend_games(
         },
         "steered_top_tags": rounded(taste, top_tags(taste, 10)),
         "candidate_pools": ranked["pool_tags"],
-        "recommendations": compact(recommendations, limit, wishlisted),
+        "recommendations": with_hours(compact(recommendations, limit, wishlisted), hours),
     }
     if ranked["requirement_relaxed"]:
         result["requirement_relaxed"] = "too few games had every boost tag, so picks need only one of them"
@@ -392,22 +409,35 @@ def recommend_games(
             for g in backlog_games(games, player_games)
             if g["tags"] and fits_tags(g["tags"], enforced, avoid, ranked["requirement_relaxed"])
         ]
-        backlog_picks = score_backlog(backlog, taste, df_table)[:limit]
-        result["backlog"] = [
-            {**pick, "playtime_hours": round(games[rec["appid"]]["playtime_hours"], 1)}
-            for rec, pick in zip(backlog_picks, compact(backlog_picks, limit), strict=True)
-        ]
+        backlog_picks, owned_hours = within_length(
+            score_backlog(backlog, taste, df_table),
+            limit,
+            max_hours,
+            lambda picks: {p["appid"]: known_hours(games[p["appid"]]["main_story_hours"]) for p in picks},
+        )
+        backlog_picks = backlog_picks[:limit]
+        result["backlog"] = with_hours(
+            [
+                {**pick, "playtime_hours": round(games[rec["appid"]]["playtime_hours"], 1)}
+                for rec, pick in zip(backlog_picks, compact(backlog_picks, limit), strict=True)
+            ],
+            owned_hours,
+        )
     # a wildcard is outside the player's usual tags by definition, so it can't also carry a required one
     if include_wildcards and not required:
         main_picks = {rec["appid"] for rec in ranked["recommendations"]}
         wild = wildcards(taste, ranked["pool_tags"], excluded | main_picks, df_table, avoid)
         if on_sale_only:
             wild = [rec for rec in wild if (rec["discount_percent"] or 0) > 0]
+        wild, wild_hours = within_length(within_price(wild, max_price_usd), WILDCARD_PICKS, max_hours, candidate_hours)
         wild = wild[:WILDCARD_PICKS]
-        result["wildcards"] = [
-            {**pick, "via_tag": rec["via_tag"]}
-            for rec, pick in zip(wild, compact(wild, WILDCARD_PICKS, wishlisted), strict=True)
-        ]
+        result["wildcards"] = with_hours(
+            [
+                {**pick, "via_tag": rec["via_tag"]}
+                for rec, pick in zip(wild, compact(wild, WILDCARD_PICKS, wishlisted), strict=True)
+            ],
+            wild_hours,
+        )
     return result
 
 
@@ -573,6 +603,8 @@ def note_request(
     avoid_tags: list[str] | None = None,
     notes: list[str] | None = None,
     remove: list[str] | None = None,
+    max_hours: float | None = None,
+    max_price_usd: float | None = None,
 ) -> dict[str, object]:
     """Record what the player wants for their next recommendation, without recommending yet.
 
@@ -584,7 +616,9 @@ def note_request(
       boost_tags: Steam user tags the picks must have ("I want a shooter", "has to be co-op").
       avoid_tags: Steam user tags they want to stay away from.
       notes: Anything else they said that matters for the picks, in a few words each.
-      remove: Game names, tags or notes they took back.
+      remove: Game names, tags or notes they took back; "max_hours" or "max_price_usd" drops that limit.
+      max_hours: Longest HowLongToBeat main story they'll accept ("under 10 hours", "something short").
+      max_price_usd: Most they'd pay now, in US dollars after any discount ("nothing over $20", "cheap").
     """
     draft = state["draft"]
     result: dict[str, object] = {}
@@ -600,6 +634,13 @@ def note_request(
     draft["notes"] = merge(draft["notes"], notes)
     for key in ("like_games", "boost_tags", "avoid_tags", "notes"):
         draft[key] = without(draft[key], remove)
+    if max_hours is not None:
+        draft["max_hours"] = max_hours
+    if max_price_usd is not None:
+        draft["max_price_usd"] = max_price_usd
+    for key in ("max_hours", "max_price_usd"):
+        if key in (remove or []):
+            draft[key] = None
     result["request_so_far"] = draft
     return result
 
