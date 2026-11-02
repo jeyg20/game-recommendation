@@ -52,6 +52,7 @@ Other tools:
   refresh_library takes a minute or two: say so first.
 - get_recommendation_history reads this session by default; for earlier ones use list_past_sessions, then pass a
   session id (or "all").
+- For why-questions about a pick ("why Hades?"), call explain_pick and answer from its numbers.
 
 Be concise. Use short lists.
 """
@@ -72,6 +73,7 @@ ANNOTATIONS: dict[str, ToolAnnotations] = {  # the tools.TOOLS served; start_new
     "note_request": ToolAnnotations(read_only_hint=False, destructive_hint=False, open_world_hint=False),
     "get_recommendation_history": READ_ONLY,
     "list_past_sessions": READ_ONLY,
+    "explain_pick": READS_STEAM,  # the store lookup; writes nothing
 }
 
 # Sync tools run on worker threads, so Claude's parallel calls would race on tools.state (ensure_loaded checks

@@ -9,6 +9,7 @@ from collections.abc import Iterable
 from typing import TypedDict, cast
 
 from src import library, steam_api, steamspy
+from src.explain import explain
 from src.history import list_sessions, load_session
 from src.library import LibraryGame
 from src.preferences import Preferences, load_preferences, merge, save_preferences, without
@@ -471,6 +472,67 @@ def start_new_session() -> dict[str, object]:
     return {"closed_session": state["session"], "status": "a new session starts with the next prompt"}
 
 
+def noted_taste(profile: TagVector, df_table: DfTable) -> tuple[TagVector, dict[str, list[str]]]:
+    """The profile steered by saved preferences and this session's draft, as recommend_games steers it by default.
+
+    Returns the steered profile and what was applied. Kept apart from recommend_games so this task doesn't edit it.
+    """
+    saved = load_preferences()
+    draft = state["draft"]
+    required, _ = canonical_tags(draft["boost_tags"], df_table)
+    soft_boost, _ = canonical_tags(saved["boost_tags"], df_table)
+    boost = merge(soft_boost, required)
+    avoid, _ = canonical_tags(merge(saved["avoid_tags"], draft["avoid_tags"]), df_table)
+    references = [
+        found for name in merge(saved["like_games"], draft["like_games"]) if (found := find_game(name)) is not None
+    ]
+    applied = {"like_games": [ref["name"] for ref in references], "boost_tags": boost, "avoid_tags": avoid}
+    if not (references or boost or avoid):
+        return profile, applied
+    taste = adjust_profile(profile, [tag_vector(ref["tags"], df_table) for ref in references], boost, avoid)
+    return taste, applied
+
+
+def explain_pick(name: str, steered: bool = False) -> dict[str, object]:
+    """Why a game fits the player's taste profile: which tags drove its score, how much each added, and which of the
+    player's own games put those tags in the profile. This is the fit to their profile, not a quality judgement.
+
+    Use for why-questions about a pick ("why Hades?") instead of guessing from matched tags.
+
+    Args:
+      name: The game's name; the best Steam store match is used. Works for owned games too.
+      steered: Explain against the profile as steered by this session's noted request and saved preferences (the
+        steering recommend_games applies), instead of the plain library profile. Use when the pick came from a
+        steered recommendation.
+    """
+    _, games, df_table, profile = ensure_loaded()
+    found = find_game(name)
+    if found is None:
+        return {"error": f"No Steam game with tags found for {name!r}"}
+    result: dict[str, object] = {}
+    if steered:
+        profile, result["steered_by"] = noted_taste(profile, df_table)
+    why = explain(found["tags"], profile, df_table, games.values())
+    owned = games.get(found["appid"])
+    return {
+        "name": found["name"],
+        "appid": found["appid"],
+        "owned": owned is not None,
+        "fit_score": round(why["score"], 3),
+        **result,
+        "tags": [
+            {
+                "tag": part["tag"],
+                "contribution": round(part["contribution"], 4),
+                "share_of_score": round(part["share_of_score"], 3),
+            }
+            for part in why["tags"]
+        ],
+        "other_tags_contribution": round(why["other_tags"], 4),
+        "because_you_played": why["because_you_played"],
+    }
+
+
 TOOLS = [
     get_taste_profile,
     recommend_games,
@@ -482,4 +544,5 @@ TOOLS = [
     get_recommendation_history,
     list_past_sessions,
     start_new_session,
+    explain_pick,
 ]

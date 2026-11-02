@@ -25,6 +25,7 @@ TOOL_LABELS = {  # what the status line says while a tool runs
     "get_recommendation_history": "reading the session logs",
     "list_past_sessions": "listing past sessions",
     "start_new_session": "closing this session",
+    "explain_pick": "working out why it fits",
 }
 MAX_TOOL_ROUNDS = 8  # model -> tools -> model round trips per prompt, guards against a call loop
 
@@ -59,6 +60,7 @@ Other tools:
 - Each session is logged separately. get_recommendation_history reads the current session by default; for earlier
   ones use list_past_sessions, then pass a session id (or "all"). When the player asks for a new session or a clean
   slate, call start_new_session.
+- For why-questions about a pick ("why Hades?"), call explain_pick and answer from its numbers.
 
 Be concise. Use short lists.
 """
