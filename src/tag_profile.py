@@ -239,6 +239,23 @@ def taste_weight(playtime_hours: float, main_story_hours: float | None, tags: di
     return (completion + volume) / 2
 
 
+RECENCY_FLOOR = 0.5  # a game last played long ago still counts this much: old favourites fade, they don't vanish
+RECENCY_SCALE_DAYS = 365
+SECONDS_PER_DAY = 86_400
+
+
+def recency_factor(last_played: int, now: float) -> float:
+    """Multiplier on a game's taste weight, so what the player plays now outweighs what they played years ago.
+
+    RECENCY_FLOOR + (1 - RECENCY_FLOOR) * exp(-days / RECENCY_SCALE_DAYS). `last_played` is Steam's
+    rtime_last_played in unix seconds; 0 (never played, or no date) is 1.0, so a missing date costs nothing.
+    """
+    if not last_played:
+        return 1.0
+    days = max(now - last_played, 0) / SECONDS_PER_DAY
+    return RECENCY_FLOOR + (1 - RECENCY_FLOOR) * math.exp(-days / RECENCY_SCALE_DAYS)
+
+
 # ---------------------------------------------------------------------
 # 4. Profile vector
 # ---------------------------------------------------------------------

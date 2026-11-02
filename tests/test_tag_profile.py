@@ -9,6 +9,7 @@ from src.tag_profile import (
     cosine,
     is_open_ended,
     norm,
+    recency_factor,
     tag_vector,
     taste_weight,
     top_tags,
@@ -129,3 +130,24 @@ def test_adjust_profile_subtracts_unit_negatives_sharing_the_weight() -> None:
 def test_adjust_profile_drops_tags_negatives_push_to_zero_or_below() -> None:
     adjusted = adjust_profile({"RPG": 0.3, "Indie": 1.0}, [], [], [], negatives=[{"RPG": 1.0, "Horror": 1.0}])
     assert set(adjusted) == {"Indie"}  # RPG went below zero, Horror was never there
+
+
+NOW = 1_800_000_000.0
+DAY = 86_400
+
+
+def test_recency_factor_is_one_when_played_today() -> None:
+    assert recency_factor(int(NOW), NOW) == 1.0
+
+
+def test_recency_factor_after_a_year_is_halfway_to_the_floor_by_e() -> None:
+    assert recency_factor(int(NOW - 365 * DAY), NOW) == pytest.approx(0.5 + 0.5 / math.e)
+
+
+def test_recency_factor_fades_towards_the_floor_but_not_below() -> None:
+    assert recency_factor(int(NOW - 5 * 365 * DAY), NOW) == pytest.approx(0.5, abs=0.01)
+    assert recency_factor(1, NOW) >= 0.5
+
+
+def test_recency_factor_is_one_without_a_last_played_date() -> None:
+    assert recency_factor(0, NOW) == 1.0

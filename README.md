@@ -50,7 +50,7 @@ Gemini (`src/ai_agent.py`) reads your prompt and calls the tools in `src/tools.p
 
 | Tool | What it does |
 | --- | --- |
-| `get_taste_profile` | Strongest profile tags, most-played games, saved preferences |
+| `get_taste_profile` | Strongest profile tags, most-played and recently played games, saved preferences |
 | `recommend_games` | Ranks unowned games, optionally steered: `like_games` ("more like X"), `boost_tags`, `avoid_tags` |
 | `note_request` | Records what you want (games, tags, notes) over several messages, without recommending yet |
 | `look_up_game` | One game's tags, whether you own it, and how well it fits your profile |
@@ -105,7 +105,9 @@ when there is one (so a finished 90-minute game doesn't count).
 3. **Taste weight** per owned game — mean of `completion = min(playtime / main_story, 1)` and
    `volume = 1 - exp(-playtime / 40)`; volume only when there's no main story or the game is multiplayer/idle.
    An *abandoned* game (launched, barely started, last played over 120 days ago) weighs -0.3 instead: it counts
-   against its tags. Never-launched games weigh 0.
+   against its tags. Never-launched games weigh 0. Every other weight is multiplied by a recency factor,
+   `0.5 + 0.5 * exp(-days_since_last_played / 365)`, so current tastes count more and old favourites fade to half,
+   never to nothing. Games played in the last two weeks (and games with no last-played date) keep factor 1.
 4. **Profile vector** — sum of `weight * vote_share * idf` over all owned games' tags, tags at or below zero
    dropped. The whole dict is the vector.
 5. **Candidates** — one SteamSpy `tag` request per top-N profile tag (cached for a day in `data/candidates/`),

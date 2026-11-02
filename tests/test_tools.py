@@ -1,3 +1,5 @@
+import pytest
+
 from src import mcp_server, tools
 from src.library import LibraryGame
 from src.tag_profile import DfTable
@@ -58,6 +60,50 @@ def test_abandoned_game_weakens_its_tags_in_the_library_profile(df_table: DfTabl
     with_dropped = tools.library_profile([loved, dropped], df_table, last_played, NOW)
     assert with_dropped["Horror"] < without["Horror"]
     assert with_dropped["RPG"] == without["RPG"]
+
+
+def test_game_played_last_week_outweighs_the_same_playtime_five_years_ago(df_table: DfTable) -> None:
+    game = tagged(1, 50.0, {"RPG": 1})
+    last_week = tools.library_profile([game], df_table, {1: days_ago(7)}, NOW)
+    five_years_ago = tools.library_profile([game], df_table, {1: days_ago(5 * 365)}, NOW)
+    assert last_week["RPG"] > 1.9 * five_years_ago["RPG"]  # 0.99 against 0.50
+
+
+def test_playtime_in_the_last_two_weeks_overrides_an_old_last_played_date(df_table: DfTable) -> None:
+    game = tagged(1, 50.0, {"RPG": 1})
+    stale = {1: days_ago(1000)}
+    assert tools.library_profile([game], df_table, stale, NOW, recent_appids={1}) == tools.library_profile(
+        [game], df_table, {1: int(NOW)}, NOW
+    )
+
+
+def test_abandoned_penalty_does_not_fade_with_time(df_table: DfTable) -> None:
+    loved = tagged(1, 50.0, {"RPG": 1, "Horror": 1})
+    dropped = tagged(2, 0.5, {"Horror": 1})
+    profiles = [
+        tools.library_profile([loved, dropped], df_table, {1: int(NOW), 2: days_ago(days)}, NOW) for days in (200, 2000)
+    ]
+    assert profiles[0]["Horror"] == profiles[1]["Horror"]
+
+
+def test_recency_floor_of_one_leaves_the_profile_as_before(df_table: DfTable, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("src.tag_profile.RECENCY_FLOOR", 1.0)
+    games = [tagged(1, 50.0, {"RPG": 1}), tagged(2, 10.0, {"Horror": 1, "RPG": 1})]
+    weighted = [(tools.taste_weight(g["playtime_hours"], None, g["tags"] or {}), g["tags"] or {}) for g in games]
+    last_played = {1: days_ago(3000), 2: days_ago(40)}
+    assert tools.library_profile(games, df_table, last_played, NOW) == tools.build_profile(weighted, df_table)
+
+
+def test_taste_profile_lists_recently_played_games(monkeypatch: pytest.MonkeyPatch) -> None:
+    owned = [
+        {"appid": 1, "name": "Old", "rtime_last_played": days_ago(400)},
+        {"appid": 2, "name": "Now", "rtime_last_played": days_ago(1), "playtime_2weeks": 90},
+        {"appid": 3, "name": "Not a game", "rtime_last_played": days_ago(1), "playtime_2weeks": 600},
+    ]
+    games = {appid: tagged(appid, 10.0, {"RPG": 1}) for appid in (1, 2)}
+    monkeypatch.setattr(tools, "ensure_loaded", lambda: (owned, games, {}, {"RPG": 1.0}))
+    monkeypatch.setattr(tools, "load_preferences", dict)
+    assert tools.get_taste_profile(5)["recently_played"] == [{"name": "Now", "hours_last_2_weeks": 1.5}]
 
 
 def test_never_launched_game_leaves_the_library_profile_unchanged(df_table: DfTable) -> None:

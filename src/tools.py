@@ -6,7 +6,7 @@ reads: keep them accurate. Library, df table and profile are loaded once and reu
 
 import difflib
 import time
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from typing import TypedDict, cast
 
 from src import library, steam_api, steamspy, wishlist
@@ -37,6 +37,7 @@ from src.tag_profile import (
     build_steam_collection,
     load_df_table,
     norm,
+    recency_factor,
     tag_vector,
     taste_weight,
     top_tags,
@@ -92,7 +93,10 @@ def ensure_loaded() -> tuple[list[OwnedGame], dict[int, LibraryGame], DfTable, T
         state["df_table"] = load_df_table()
     if state["profile"] is None:
         state["profile"] = library_profile(
-            state["games"].values(), state["df_table"], last_played_by_appid(state["player_games"])
+            state["games"].values(),
+            state["df_table"],
+            last_played_by_appid(state["player_games"]),
+            recent_appids=played_recently(state["player_games"]),
         )
         if not state["profile"]:
             raise RuntimeError("Empty taste profile: no owned game has both playtime and tags")
@@ -104,29 +108,36 @@ def last_played_by_appid(player_games: Iterable[OwnedGame]) -> dict[int, int]:
     return {game["appid"]: game["rtime_last_played"] for game in player_games}
 
 
+def played_recently(player_games: Iterable[OwnedGame]) -> set[int]:
+    """Appids with playtime in the last two weeks (Steam's playtime_2weeks, absent otherwise)."""
+    return {game["appid"] for game in player_games if game.get("playtime_2weeks", 0) > 0}
+
+
 def library_profile(
     games: Iterable[LibraryGame],
     df_table: DfTable,
     last_played: Mapping[int, int] | None = None,
     now: float | None = None,
+    recent_appids: Collection[int] = (),
 ) -> TagVector:
     """The taste profile of these owned games. Shared with the offline evaluation, which leaves one game out.
 
     Abandoned games (see is_abandoned) weigh -ABANDON_WEIGHT; without `last_played` none count as abandoned.
+    Other games' weights fade with time since last played (recency_factor), except games in `recent_appids`
+    (played in the last two weeks).
+    The abandoned penalty doesn't fade: an old abandonment is no weaker evidence against its tags.
     """
     last_played = last_played or {}
     now = time.time() if now is None else now
-    weighted = [
-        (
-            -ABANDON_WEIGHT
-            if is_abandoned(g, last_played.get(g["appid"], 0), now)
-            else taste_weight(g["playtime_hours"], g["main_story_hours"], g["tags"] or {}),
-            g["tags"] or {},
-        )
-        for g in games
-        if g["tags"]
-    ]
-    return build_profile(weighted, df_table)
+
+    def weight(game: LibraryGame) -> float:
+        played = last_played.get(game["appid"], 0)
+        if is_abandoned(game, played, now):
+            return -ABANDON_WEIGHT
+        base = taste_weight(game["playtime_hours"], game["main_story_hours"], game["tags"] or {})
+        return base if game["appid"] in recent_appids else base * recency_factor(played, now)
+
+    return build_profile([(weight(g), g["tags"] or {}) for g in games if g["tags"]], df_table)
 
 
 def rounded(profile: TagVector, tags: list[str]) -> dict[str, float]:
@@ -233,6 +244,11 @@ def get_taste_profile(top_n: int = 15) -> dict[str, object]:
     return {
         "top_tags": rounded(profile, top_tags(profile, top_n)),
         "most_played": [{"name": g["name"], "hours": round(g["playtime_hours"], 1)} for g in played[:10]],
+        "recently_played": [
+            {"name": game["name"], "hours_last_2_weeks": round(game.get("playtime_2weeks", 0) / 60, 1)}
+            for game in sorted(player_games, key=lambda game: game.get("playtime_2weeks", 0), reverse=True)
+            if game.get("playtime_2weeks", 0) > 0 and game["appid"] in games  # games only, as most_played
+        ],
         "backlog_games": len(backlog_games(games, player_games)),
         "library_size": len(games),
         "saved_preferences": load_preferences(),

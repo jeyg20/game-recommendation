@@ -49,6 +49,7 @@ def main() -> int:
             df_table,
             label=args.label,
             last_played=tools.last_played_by_appid(player_games),
+            recent_appids=tools.played_recently(player_games),
         )
         path = save(result)
 
