@@ -39,14 +39,13 @@ uses the OpenAI API (that includes the `sol-loop` skill's reviewer and `codex:*`
 ## Gate: run before every commit
 
 ```sh
-uv run pytest -q                                              # once T00 has landed
+uv run pytest -q
 uvx ruff check src tests
 uvx ruff format --check --line-length 120 src tests
 uvx pyright --pythonpath .venv/bin/python src
 ```
 
-All four must pass. Until T00 lands, `src/` has 2 ruff, 1 format and 4 pyright errors that were already there.
-Don't add new ones, and don't fix those unless you are T00.
+All four must pass (they did on `ai-created` when T00 merged). Run ruff on `scripts` too if you touched it.
 
 ## Adding or changing a tool
 
@@ -80,8 +79,8 @@ append-only edits there so parallel branches merge cleanly.
 Every task file lists its proof. On top of that:
 
 - Pure logic changes: a test that fails without your change.
-- Tool changes: call the tool over MCP with `scripts/mcp_smoke.py` (T00 adds it) and paste the output in your
-  hand-back.
+- Tool changes: call the tool over MCP with `scripts/mcp_smoke.py <tool> '<json args>'` and paste the output in
+  your hand-back. It deletes only its own session logs.
 - Ranking changes: run `scripts/evaluate.py` (T01) before and after, and report both numbers.
 
 ## Style
