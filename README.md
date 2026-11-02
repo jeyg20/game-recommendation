@@ -25,6 +25,22 @@ Needs `STEAM_API_KEY`, `STEAM_ID` and `GEMINI_API` in `.env` (`--report` works w
 recommendation. Picks are shown as tables straight from the ranking (fit bar, rating or hours played, matched tags);
 Gemini adds a short commentary underneath. Colors turn off when output is piped or `NO_COLOR` is set.
 
+## MCP server
+
+The same tools are also served over MCP (`src/mcp_server.py`, stdio), so Claude Code or Claude Desktop does the
+reasoning instead of Gemini; no `GEMINI_API` needed. The repo's `.mcp.json` registers it for Claude Code: open
+`claude` in the repo, approve the `gamer-guide` server, and ask for picks. Elsewhere:
+
+```sh
+claude mcp add gamer-guide -- uv run --project ~/dev/gamer_guide gamer-guide-mcp
+```
+
+One server process is one session with its own log; each tool call is logged as a turn (`[mcp] <tool>`, no prompt
+or reply), so `get_recommendation_history` works as in the CLI. `start_new_session` isn't served: a new
+conversation is a new session. Calls run one at a time under a lock, since the tools share loaded state.
+`refresh_library` and `update_background_corpus` can outlast the client's tool timeout; in Claude Code raise it with
+`MCP_TOOL_TIMEOUT` (milliseconds) if they get cut off. Status messages go to the client's MCP log (stderr).
+
 ## Assistant
 
 Gemini (`src/ai_agent.py`) reads your prompt and calls the tools in `src/tools.py`:

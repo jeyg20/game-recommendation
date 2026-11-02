@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "gamer-guide": {
+      "command": "uv",
+      "args": ["run", "--project", ".", "gamer-guide-mcp"]
+    }
+  }
+}

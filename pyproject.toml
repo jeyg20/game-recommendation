@@ -8,6 +8,7 @@ dependencies = [
     "dotenv>=0.9.9",
     "google-genai>=2.20.0",
     "howlongtobeatpy>=1.0.22",
+    "mcp>=2.3.0",
     "prompt-toolkit>=3.0.53",
     "pydantic>=2.13.4",
     "requests>=2.34.2",
@@ -15,6 +16,7 @@ dependencies = [
 
 [project.scripts]
 gamer-guide = "src.cli:main"
+gamer-guide-mcp = "src.mcp_server:main"
 
 [build-system]
 requires = ["hatchling"]
