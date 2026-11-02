@@ -14,7 +14,7 @@ Status: `todo` → `running` → `review` → `merged` (or `blocked: <why>`). Up
 | --- | --- | --- | --- | --- | --- | --- |
 | T00 | [Test harness and a green gate](tasks/T00-test-harness.md) | 0 | – | `feat/t00-test-harness` | merged | `6760961`; review fix: smoke deletes only its own logs |
 | T01 | [Offline evaluation (hide your own games)](tasks/T01-evaluation.md) | 0 | T00 | `feat/t01-evaluation` | todo | |
-| B01 | [Stale tag pools when SteamSpy returns nothing](tasks/B01-stale-tag-pools.md) | 1 | T00 | `feat/b01-stale-tag-pools` | todo | bug: top tags drop out; only `recommend.fetch_tag_pools` |
+| B01 | [Stale tag pools when SteamSpy returns nothing](tasks/B01-stale-tag-pools.md) | 1 | T00 | `feat/b01-stale-tag-pools` | merged | `6522173`. Follow-up: the empty-tag set lasts the process (a long-lived Desktop server never re-asks until restart) |
 | F01 | [Ratings and "not interested"](tasks/F01-ratings.md) | 1 | T00 | `feat/f01-ratings` | todo | |
 | F02 | [Did past picks work?](tasks/F02-pick-outcomes.md) | 1 | T00 | `feat/f02-pick-outcomes` | todo | |
 | F03 | [Wishlist](tasks/F03-wishlist.md) | 1 | T00 | `feat/f03-wishlist` | todo | |
