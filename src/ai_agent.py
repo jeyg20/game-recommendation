@@ -26,6 +26,7 @@ TOOL_LABELS = {  # what the status line says while a tool runs
     "list_past_sessions": "listing past sessions",
     "start_new_session": "closing this session",
     "explain_pick": "working out why it fits",
+    "get_pick_outcomes": "checking how past picks turned out",
 }
 MAX_TOOL_ROUNDS = 8  # model -> tools -> model round trips per prompt, guards against a call loop
 
@@ -61,6 +62,7 @@ Other tools:
   ones use list_past_sessions, then pass a session id (or "all"). When the player asks for a new session or a clean
   slate, call start_new_session.
 - For why-questions about a pick ("why Hades?"), call explain_pick and answer from its numbers.
+- For "how good have your recommendations been?", call get_pick_outcomes; say it reflects the last library refresh.
 
 Be concise. Use short lists.
 """

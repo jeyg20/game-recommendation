@@ -12,6 +12,7 @@ from src import library, steam_api, steamspy
 from src.explain import explain
 from src.history import list_sessions, load_session
 from src.library import LibraryGame
+from src.outcomes import PLAYED_HOURS, pick_outcomes
 from src.preferences import Preferences, load_preferences, merge, save_preferences, without
 from src.recommend import Recommendation, fits_tags, recommend, score, score_backlog
 from src.steam_api import OwnedGame
@@ -533,6 +534,46 @@ def explain_pick(name: str, steered: bool = False) -> dict[str, object]:
     }
 
 
+def get_pick_outcomes(limit: int = 20) -> dict[str, object]:
+    """How past recommendations turned out: of every game ever recommended, which the player bought and how much
+    they played it, plus how many backlog picks they started. Each game counts once, however often it was picked.
+
+    Use for "how good have your recommendations been?" or "did I play what you recommended?".
+
+    Args:
+      limit: How many bought games to list, most-played first.
+    """
+    _, games, _, _ = ensure_loaded()
+    outcomes = pick_outcomes(games)
+    picks = outcomes["picks"]
+    bought = sorted((pick for pick in picks if pick["bought"]), key=lambda pick: pick["hours"], reverse=True)
+    played = [pick for pick in bought if pick["hours"] > PLAYED_HOURS]
+    return {
+        "summary": {
+            "recommended": len(picks),
+            "bought": len(bought),
+            f"played_over_{PLAYED_HOURS:g}h": len(played),
+            "buy_rate": round(len(bought) / len(picks), 3) if picks else None,
+            "hit_rate": round(len(played) / len(picks), 3) if picks else None,
+            "backlog_recommended": len(outcomes["backlog"]),
+            "backlog_started": sum(game["started"] for game in outcomes["backlog"]),
+        },
+        "bought_games": [
+            {
+                "name": pick["name"],
+                "appid": pick["appid"],
+                "hours": round(pick["hours"], 1),
+                "first_recommended": pick["first_recommended"],
+                "rank": pick["rank"],
+                "score": pick["score"],
+            }
+            for pick in bought[:limit]
+        ],
+        "note": f"hit_rate counts picks bought and played over {PLAYED_HOURS:g} h. Ownership and playtime are as of "
+        "the last library refresh (refresh_library), so recent purchases may be missing.",
+    }
+
+
 TOOLS = [
     get_taste_profile,
     recommend_games,
@@ -545,4 +586,5 @@ TOOLS = [
     list_past_sessions,
     start_new_session,
     explain_pick,
+    get_pick_outcomes,
 ]

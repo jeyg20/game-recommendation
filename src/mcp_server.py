@@ -53,6 +53,7 @@ Other tools:
 - get_recommendation_history reads this session by default; for earlier ones use list_past_sessions, then pass a
   session id (or "all").
 - For why-questions about a pick ("why Hades?"), call explain_pick and answer from its numbers.
+- For "how good have your recommendations been?", call get_pick_outcomes; say it reflects the last library refresh.
 
 Be concise. Use short lists.
 """
@@ -74,6 +75,7 @@ ANNOTATIONS: dict[str, ToolAnnotations] = {  # the tools.TOOLS served; start_new
     "get_recommendation_history": READ_ONLY,
     "list_past_sessions": READ_ONLY,
     "explain_pick": READS_STEAM,  # the store lookup; writes nothing
+    "get_pick_outcomes": READ_ONLY,
 }
 
 # Sync tools run on worker threads, so Claude's parallel calls would race on tools.state (ensure_loaded checks

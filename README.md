@@ -61,6 +61,7 @@ Gemini (`src/ai_agent.py`) reads your prompt and calls the tools in `src/tools.p
 | `list_past_sessions` | Logged sessions with their first prompt |
 | `start_new_session` | Closes this session's log and starts a fresh one (also `/new`) |
 | `explain_pick` | Why a game fits your profile: each tag's share of the score and the owned games behind the top tags |
+| `get_pick_outcomes` | How past picks turned out: how many you bought and played over 2 h, and backlog picks started |
 
 Steering: the library profile is scaled to unit length and the reference games' tag vectors are added on top
 (sharing a weight of 1.0 between them). Boost tags are must-haves: their SteamSpy pools are always fetched, every
