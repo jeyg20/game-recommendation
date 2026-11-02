@@ -13,7 +13,7 @@ Status: `todo` → `running` → `review` → `merged` (or `blocked: <why>`). Up
 | ID | Task | Wave | Needs | Branch | Status | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
 | T00 | [Test harness and a green gate](tasks/T00-test-harness.md) | 0 | – | `feat/t00-test-harness` | merged | `6760961`; review fix: smoke deletes only its own logs |
-| T01 | [Offline evaluation (hide your own games)](tasks/T01-evaluation.md) | 0 | T00 | `feat/t01-evaluation` | todo | |
+| T01 | [Offline evaluation (hide your own games)](tasks/T01-evaluation.md) | 0 | T00 | `feat/t01-evaluation` | merged | `598ae98`. Baseline 2026-11-01 (after B01): recall@10 0.00, recall@25 0.20, MRR 0.015, never retrieved 5/10, diversity 0.766 |
 | B01 | [Stale tag pools when SteamSpy returns nothing](tasks/B01-stale-tag-pools.md) | 1 | T00 | `feat/b01-stale-tag-pools` | merged | `6522173`. Follow-up: the empty-tag set lasts the process (a long-lived Desktop server never re-asks until restart) |
 | F01 | [Ratings and "not interested"](tasks/F01-ratings.md) | 1 | T00 | `feat/f01-ratings` | todo | |
 | F02 | [Did past picks work?](tasks/F02-pick-outcomes.md) | 1 | T00 | `feat/f02-pick-outcomes` | todo | |
@@ -35,6 +35,8 @@ Status: `todo` → `running` → `review` → `merged` (or `blocked: <why>`). Up
 - **Wave 0, one at a time.** T00 first: every later task proves itself with its tests and `scripts/mcp_smoke.py`.
   T01 right after, because wave 2 is judged by its numbers.
 - **Wave 1, in parallel.** B01 (a bug fix, start it now: it doesn't need T01) and six features that mostly add new modules and tools. Start them all once T00 is merged.
+- **Wave 2 "before" numbers.** SteamSpy answers change from day to day, so each wave 2 task runs its own
+  `scripts/evaluate.py --label before` on `ai-created` the same day as its "after". Don't compare with the board's baseline.
 - **Wave 2, mostly one at a time.** Ranking changes. They all touch the profile or `recommend()`, so overlapping
   rows in the file map below don't run at the same time. R01 can run alongside R02. R04 and R03 wait for R02,
   F07 for R03, R05 for F04 (merged in wave 1) and R04.
@@ -61,7 +63,7 @@ tasks must not run in parallel, or the second one rebases onto the first one's m
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `tools.recommend_games` | ● | | ● | ● | | | | ● | | ● | ● | |
 | `tools.compact` / `Recommendation` | | | ● | ● | | | | | | | ● | |
-| `tools.ensure_loaded` (weights), `get_taste_profile` | | | | | | | | ● | ● | | | ● |
+| `tools.library_profile` / `ensure_loaded` (weights), `get_taste_profile` | | | | | | | | ● | ● | | | ● |
 | `tag_profile.taste_weight` / `build_profile` | | | | | | | | ● | ● | | | ● |
 | `tag_profile.adjust_profile` | ● | | | | | | | | | | | |
 | `recommend.recommend` / `ranked` | | | | ● | | | ● | | | ● | ● | |

@@ -11,6 +11,9 @@ The profile leans toward what the player plays now, not what they played years a
   `OwnedGame` also carries `playtime_2weeks` (only present for games played in the last two weeks).
 
 ## Design
+Note (T01): the profile weighting lives in `tools.library_profile(games, df_table)`, shared by `ensure_loaded`
+and `src/evaluate.py`. Change the weighting there, so the evaluation measures the real profile.
+
 - `recency_factor(last_played, now) = RECENCY_FLOOR + (1 - RECENCY_FLOOR) * exp(-days / RECENCY_SCALE_DAYS)`
   with `RECENCY_FLOOR = 0.5`, `RECENCY_SCALE_DAYS = 365`. Never played (0) → 1.0 (weight is 0 anyway).
 - Positive weights are multiplied by it; R02's negative (abandoned) weights are not.

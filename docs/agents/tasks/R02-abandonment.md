@@ -15,6 +15,9 @@ in the README's "Open ideas" ("negative weight for early abandonment instead of 
   `rtime_last_played` (unix seconds; 0 = never).
 
 ## Design
+Note (T01): the profile weighting lives in `tools.library_profile(games, df_table)`, shared by `ensure_loaded`
+and `src/evaluate.py`. Change the weighting there, so the evaluation measures the real profile.
+
 - Abandoned = played (`playtime_hours > 0`), `is_backlog` is true (barely started), and last played more than
   `ABANDON_MIN_DAYS = 120` days ago. Never-launched games (0 h) are not abandoned: no signal.
 - Abandoned games get weight `-ABANDON_WEIGHT = -0.3` in `build_profile` (allow negative weights). After summing,

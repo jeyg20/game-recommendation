@@ -13,6 +13,9 @@ when HowLongToBeat has no main-story time.
   Owned games with achievements have `has_community_visible_stats: true` in `OwnedGame`.
 
 ## Design
+Note (T01): the profile weighting lives in `tools.library_profile(games, df_table)`, shared by `ensure_loaded`
+and `src/evaluate.py`. Change the weighting there, so the evaluation measures the real profile.
+
 - `steam_api.get_player_achievements(steam_id, key, appid) -> tuple[int, int] | None` (achieved, total). Games
   without achievements, or errors, → None.
 - `library.py`: a cached step `data/raw/achievements.json` (`{appid: [achieved, total] | null}`), built with
