@@ -23,10 +23,10 @@ Status: `todo` → `running` → `review` → `merged` (or `blocked: <why>`). Up
 | F06 | [Export a report](tasks/F06-export.md) | 1 | T00 | `feat/f06-export` | merged | `48c9e33`. `export.to_markdown` / `to_html` are pure (optional `day`); unknown pick fields become extra columns |
 | R01 | [Variety in the top picks](tasks/R01-diversity.md) | 2 | T01 | `feat/r01-diversity` | merged | `d24f680`. λ 0.75. Evaluate 2026-11-02: diversity 0.766 → 0.445, recall@25 0.20 → 0.10 (−1 game, the limit), recall@10 0.00 → 0.10, MRR 0.014 → 0.024 |
 | R02 | [Abandoned games count against their tags](tasks/R02-abandonment.md) | 2 | T01 | `feat/r02-abandonment` | merged | `8779ef1`. Evaluate 2026-11-02: recall@25 0.10 → 0.10, never retrieved 6 → 5/10, diversity 0.445 → 0.411. Product change: abandoned games leave the backlog (13 → 7). `is_abandoned` / `last_played_by_appid` / `backlog_games` live in `tools.py` (circular import). Follow-up: `explain.game_shares` still uses `taste_weight` (an abandoned game could show under because_you_played) |
-| R03 | [Recent tastes count more](tasks/R03-recency.md) | 2 | R02 | `feat/r03-recency` | running | T3 child thread, alongside F03 (no shared function) |
-| R04 | [Wildcard picks outside the bubble](tasks/R04-wildcards.md) | 2 | R02 | `feat/r04-wildcards` | running | T3 child thread, alongside R03 (no shared function) |
+| R03 | [Recent tastes count more](tasks/R03-recency.md) | 2 | R02 | `feat/r03-recency` | merged | `efd9fce`. Evaluate 2026-11-02: MRR 0.023 → 0.013, never retrieved 5 → 8/10, diversity 0.411 → 0.592. The hold-out test favours old favourites (half the held-out games last played 2–3 years ago); not tuned to it. `RECENCY_FLOOR = 1.0` turns it off |
+| R04 | [Wildcard picks outside the bubble](tasks/R04-wildcards.md) | 2 | R02 | `feat/r04-wildcards` | running | First run hit a Claude rate limit after setup; restarted in the same worktree, alongside F07 |
 | R05 | [Length and price limits](tasks/R05-constraints.md) | 2 | F04, R04 | `feat/r05-constraints` | todo | |
-| F07 | [Achievements in the taste weight](tasks/F07-achievements.md) | 2 | R03 | `feat/f07-achievements` | todo | |
+| F07 | [Achievements in the taste weight](tasks/F07-achievements.md) | 2 | R03 | `feat/f07-achievements` | running | T3 child thread, alongside R04 (no shared function) |
 | F08 | [What do my friends own?](tasks/F08-friends.md) | 3 | wave 1 | `feat/f08-friends` | todo | optional |
 | F09 | [Weekly digest](tasks/F09-digest.md) | 3 | F06 | `feat/f09-digest` | todo | optional |
 
