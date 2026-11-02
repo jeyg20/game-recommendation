@@ -27,8 +27,8 @@ Status: `todo` → `running` → `review` → `merged` (or `blocked: <why>`). Up
 | R04 | [Wildcard picks outside the bubble](tasks/R04-wildcards.md) | 2 | R02 | `feat/r04-wildcards` | merged | `a0a55d4`. Coordinator change: wildcards re-ranked with `diversify` (the spec's fit order gave three BioShocks). Only 1 of ranks 9–20 (Underwater) passes the median-idf filter on this profile, so wildcards come from one pool; widen `WILDCARD_TAG_RANKS` or loosen the filter if they feel narrow. Follow-up: `--export` has no wildcards section |
 | R05 | [Length and price limits](tasks/R05-constraints.md) | 2 | F04, R04 | `feat/r05-constraints` | running | T3 child thread, alongside F08 |
 | F07 | [Achievements in the taste weight](tasks/F07-achievements.md) | 2 | R03 | `feat/f07-achievements` | merged | `b11d923`. MRR 0.013 → 0.014, recall unchanged (most heavy games already exceed their story time). Achievements are a separate cached step (`library.load_achievement_shares`); the main checkout builds `data/raw/achievements.json` on first load (~48 requests, ~1 min). Found and fixed after merge: failed Steam requests printed the key (`1de5118`) |
-| F08 | [What do my friends own?](tasks/F08-friends.md) | 3 | wave 1 | `feat/f08-friends` | running | optional. T3 child thread, alongside R04 |
-| F09 | [Weekly digest](tasks/F09-digest.md) | 3 | F06 | `feat/f09-digest` | todo | optional |
+| F08 | [What do my friends own?](tasks/F08-friends.md) | 3 | wave 1 | `feat/f08-friends` | merged | `9cf5ee6`. optional. Live: 15 friends, 3 private, first call 95 s, cached 0.8 s. `steamids` added to the redacted params. Saved/noted steers aren't auto-applied (the model passes them) |
+| F09 | [Weekly digest](tasks/F09-digest.md) | 3 | F06 | `feat/f09-digest` | running | optional. T3 child thread, alongside R05 |
 
 ## Waves
 
