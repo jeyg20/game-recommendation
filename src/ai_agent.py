@@ -27,6 +27,8 @@ TOOL_LABELS = {  # what the status line says while a tool runs
     "start_new_session": "closing this session",
     "explain_pick": "working out why it fits",
     "get_pick_outcomes": "checking how past picks turned out",
+    "rate_games": "saving your ratings",
+    "get_feedback": "reading your ratings",
 }
 MAX_TOOL_ROUNDS = 8  # model -> tools -> model round trips per prompt, guards against a call loop
 
@@ -63,6 +65,7 @@ Other tools:
   slate, call start_new_session.
 - For why-questions about a pick ("why Hades?"), call explain_pick and answer from its numbers.
 - For "how good have your recommendations been?", call get_pick_outcomes; say it reflects the last library refresh.
+- When the player reacts to picks (liked, disliked, not interested), call rate_games.
 
 Be concise. Use short lists.
 """

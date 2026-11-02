@@ -54,6 +54,7 @@ Other tools:
   session id (or "all").
 - For why-questions about a pick ("why Hades?"), call explain_pick and answer from its numbers.
 - For "how good have your recommendations been?", call get_pick_outcomes; say it reflects the last library refresh.
+- When the player reacts to picks (liked, disliked, not interested), call rate_games.
 
 Be concise. Use short lists.
 """
@@ -76,6 +77,8 @@ ANNOTATIONS: dict[str, ToolAnnotations] = {  # the tools.TOOLS served; start_new
     "list_past_sessions": READ_ONLY,
     "explain_pick": READS_STEAM,  # the store lookup; writes nothing
     "get_pick_outcomes": READ_ONLY,
+    "rate_games": ToolAnnotations(read_only_hint=False, destructive_hint=False, open_world_hint=True),
+    "get_feedback": READ_ONLY,
 }
 
 # Sync tools run on worker threads, so Claude's parallel calls would race on tools.state (ensure_loaded checks

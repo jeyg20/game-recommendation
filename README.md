@@ -62,6 +62,8 @@ Gemini (`src/ai_agent.py`) reads your prompt and calls the tools in `src/tools.p
 | `start_new_session` | Closes this session's log and starts a fresh one (also `/new`) |
 | `explain_pick` | Why a game fits your profile: each tag's share of the score and the owned games behind the top tags |
 | `get_pick_outcomes` | How past picks turned out: how many you bought and played over 2 h, and backlog picks started |
+| `rate_games` | Saves liked, disliked and not-interested games (`data/feedback.json`) that steer every later request |
+| `get_feedback` | The games you rated with `rate_games` |
 
 Steering: the library profile is scaled to unit length and the reference games' tag vectors are added on top
 (sharing a weight of 1.0 between them). Boost tags are must-haves: their SteamSpy pools are always fetched, every
@@ -69,7 +71,9 @@ finalist has to be in all of them and carry each one among its 10 strongest tags
 relaxed, when fewer than 10 picks qualify), and they get the strongest tag's weight in the ranking. Boost tags
 saved with `update_preferences` are standing tastes instead: they add weight but never filter. Avoided tags are
 removed from the profile, and any candidate with one among its 5 strongest is dropped. The backlog follows the same
-must-have and avoid rules.
+must-have and avoid rules. Games rated with `rate_games`: liked ones join the reference games, disliked ones are
+subtracted (unit length, sharing a weight of 0.5, tags pushed to zero or below dropped), and disliked or
+not-interested games are never recommended again.
 
 **When it recommends.** Only when you ask for picks ("recommend", "what should I play", "that's it") or send a
 complete request in one message. While you're still describing what you want, it notes each detail with

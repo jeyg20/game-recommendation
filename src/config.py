@@ -31,4 +31,5 @@ EVAL_DIR = ROOT / "data/output/eval"
 
 # Assistant (ai_agent.py)
 PREFERENCES_PATH = ROOT / "data/preferences.json"
+FEEDBACK_PATH = ROOT / "data/feedback.json"  # liked / disliked / not-interested games (feedback.py)
 SESSIONS_DIR = ROOT / "data/logs/sessions"  # one JSONL log per chat session

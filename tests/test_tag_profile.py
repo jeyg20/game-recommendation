@@ -112,3 +112,13 @@ def test_cosine_of_disjoint_vectors_is_zero() -> None:
 def test_cosine_of_empty_vectors_is_zero() -> None:
     assert cosine({}, 0.0, {"RPG": 1.0}) == 0.0
     assert cosine({"RPG": 1.0}, 1.0, {}) == 0.0
+
+
+def test_adjust_profile_subtracts_unit_negatives_sharing_the_weight() -> None:
+    adjusted = adjust_profile({"RPG": 3.0, "Indie": 4.0}, [], [], [], negatives=[{"Indie": 2.0}, {"RPG": 1.0}])
+    assert adjusted == pytest.approx({"RPG": 0.6 - 0.25, "Indie": 0.8 - 0.25})
+
+
+def test_adjust_profile_drops_tags_negatives_push_to_zero_or_below() -> None:
+    adjusted = adjust_profile({"RPG": 0.3, "Indie": 1.0}, [], [], [], negatives=[{"RPG": 1.0, "Horror": 1.0}])
+    assert set(adjusted) == {"Indie"}  # RPG went below zero, Horror was never there

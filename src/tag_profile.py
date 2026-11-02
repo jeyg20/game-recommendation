@@ -266,6 +266,7 @@ def build_profile(games: list[tuple[float, dict[str, int]]], df_table: DfTable) 
 
 
 REFERENCE_WEIGHT = 1.0  # all "more like X" games together, relative to the whole (unit-length) library profile
+DISLIKE_WEIGHT = 0.5  # all disliked games together, subtracted from the unit-length library profile
 BOOST_WEIGHT = 1.0  # a boosted tag gets this share of the profile's strongest tag added on top
 
 
@@ -274,11 +275,14 @@ def adjust_profile(
     references: list[TagVector],
     boost_tags: list[str],
     avoid_tags: list[str],
+    negatives: list[TagVector] | None = None,
 ) -> TagVector:
-    """Steer the library profile toward reference games / boosted tags and away from avoided ones.
+    """Steer the library profile toward reference games / boosted tags, away from negatives / avoided tags.
 
     The profile is scaled to unit length first so the weights mean the same thing whatever the library size.
-    Each reference is unit length too, and they share REFERENCE_WEIGHT between them.
+    Each reference is unit length too, and they share REFERENCE_WEIGHT between them. Negatives (disliked games) are
+    unit length and share DISLIKE_WEIGHT, subtracted. A tag they push to zero or below is dropped: cosine would
+    otherwise reward candidates for lacking it, which is avoid_tags' job.
     """
     profile_norm = norm(profile)
     adjusted: defaultdict[str, float] = defaultdict(
@@ -291,6 +295,15 @@ def adjust_profile(
             continue
         for tag, value in reference.items():
             adjusted[tag] += REFERENCE_WEIGHT / len(references) * value / reference_norm
+
+    if negatives:
+        for negative in negatives:
+            negative_norm = norm(negative)
+            if negative_norm == 0:
+                continue
+            for tag, value in negative.items():
+                adjusted[tag] -= DISLIKE_WEIGHT / len(negatives) * value / negative_norm
+        adjusted = defaultdict(float, {tag: value for tag, value in adjusted.items() if value > 0})
 
     strongest = max(adjusted.values(), default=1.0)
     for tag in boost_tags:

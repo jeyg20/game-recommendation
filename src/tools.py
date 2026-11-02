@@ -10,6 +10,18 @@ from typing import TypedDict, cast
 
 from src import library, steam_api, steamspy
 from src.explain import explain
+from src.feedback import (
+    RATINGS,
+    Rating,
+    empty_feedback,
+    find_rated,
+    load_feedback,
+    names,
+    never_recommend,
+    rate,
+    save_feedback,
+    unrate,
+)
 from src.history import list_sessions, load_session
 from src.library import LibraryGame
 from src.outcomes import PLAYED_HOURS, pick_outcomes
@@ -221,14 +233,25 @@ def recommend_games(
             not_found.append(name)
         else:
             references.append(found)
+    # rated games: disliked and dismissed ones never come back; liked and disliked ones steer like saved preferences
+    feedback = load_feedback()
+    steering = feedback if use_saved_preferences else empty_feedback()
+    liked = list(steering["liked"].values())
+    negatives = [tag_vector(game["tags"], df_table) for game in steering["disliked"].values()]
 
-    steered = bool(references or boost or avoid)
+    steered = bool(references or liked or negatives or boost or avoid)
     taste = (
-        adjust_profile(profile, [tag_vector(ref["tags"], df_table) for ref in references], boost, avoid)
+        adjust_profile(
+            profile, [tag_vector(game["tags"], df_table) for game in [*references, *liked]], boost, avoid, negatives
+        )
         if steered
         else profile
     )
-    excluded = {game["appid"] for game in player_games} | {ref["appid"] for ref in references}
+    excluded = (
+        {game["appid"] for game in player_games}
+        | {game["appid"] for game in [*references, *liked]}
+        | never_recommend(feedback)
+    )
     ranked = recommend(taste, top_tags(taste, 8), excluded, df_table, avoid, required_tags=required)
     recommendations = ranked["recommendations"]
 
@@ -240,6 +263,18 @@ def recommend_games(
             "avoid_tags": avoid,
             "from_saved_preferences": use_saved_preferences,
             "player_notes": draft["notes"],
+            # only once the player has rated something, so output without feedback is unchanged
+            **(
+                {
+                    "feedback_applied": {
+                        "liked": len(liked),
+                        "disliked": len(negatives),
+                        "not_interested": len(feedback["not_interested"]),
+                    }
+                }
+                if any(feedback.values())
+                else {}
+            ),
         },
         "steered_top_tags": rounded(taste, top_tags(taste, 10)),
         "candidate_pools": ranked["pool_tags"],
@@ -574,6 +609,55 @@ def get_pick_outcomes(limit: int = 20) -> dict[str, object]:
     }
 
 
+def rate_games(
+    liked: list[str] | None = None,
+    disliked: list[str] | None = None,
+    not_interested: list[str] | None = None,
+    remove: list[str] | None = None,
+) -> dict[str, object]:
+    """Save the player's reactions to games, kept across sessions and applied to every recommend_games call.
+
+    Use when the player reacts to picks ("loved Hades", "Dead Cells isn't for me", "not interested in Rust").
+    Liked games pull the ranking toward their tags, disliked ones push it away and never come back as picks,
+    not-interested ones are only hidden from future picks. Rating a game again moves it to the new list.
+
+    Args:
+      liked: Game names the player liked or wants more of.
+      disliked: Game names the player played or tried and didn't like.
+      not_interested: Game names the player just doesn't want recommended, without judging their taste.
+      remove: Game names to take out of every list.
+    """
+    feedback = load_feedback()
+    not_found: list[str] = []
+    for name in remove or []:
+        appid = find_rated(feedback, name)
+        if appid is None and (found := find_game(name)) is not None:
+            appid = found["appid"]
+        if appid is None:
+            not_found.append(name)
+        else:
+            unrate(feedback, appid)
+    asked: dict[Rating, list[str] | None] = {"liked": liked, "disliked": disliked, "not_interested": not_interested}
+    for rating in RATINGS:
+        for name in asked[rating] or []:
+            found = find_game(name)
+            if found is None:
+                not_found.append(name)
+            else:
+                rate(feedback, rating, found["appid"], found["name"], found["tags"])
+    save_feedback(feedback)
+
+    result: dict[str, object] = {"feedback": names(feedback)}
+    if not_found:
+        result["not_found"] = not_found
+    return result
+
+
+def get_feedback() -> dict[str, object]:
+    """The games the player rated with rate_games: liked, disliked and not interested."""
+    return {"feedback": names(load_feedback())}
+
+
 TOOLS = [
     get_taste_profile,
     recommend_games,
@@ -587,4 +671,6 @@ TOOLS = [
     start_new_session,
     explain_pick,
     get_pick_outcomes,
+    rate_games,
+    get_feedback,
 ]
