@@ -17,7 +17,17 @@ from contextlib import contextmanager
 INTERACTIVE = sys.stdout.isatty()
 COLOR = INTERACTIVE and "NO_COLOR" not in os.environ
 
-CODES = {"bold": "1", "dim": "2", "italic": "3", "red": "31", "green": "32", "yellow": "33", "blue": "34", "cyan": "36", "grey": "37"}
+CODES = {
+    "bold": "1",
+    "dim": "2",
+    "italic": "3",
+    "red": "31",
+    "green": "32",
+    "yellow": "33",
+    "blue": "34",
+    "cyan": "36",
+    "grey": "37",
+}
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 

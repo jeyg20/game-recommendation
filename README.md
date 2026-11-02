@@ -99,6 +99,25 @@ when there is one (so a finished 90-minute game doesn't count).
 
 `--report` prints the ranking and saves it to `data/output/recommendations.json`.
 
+## Development
+
+The gate, run before every commit (all four must pass):
+
+```sh
+uv run pytest -q                                              # offline: HTTP is blocked, data paths point at tmp
+uvx ruff check src tests
+uvx ruff format --check --line-length 120 src tests
+uvx pyright --pythonpath .venv/bin/python src
+```
+
+To prove a tool works over MCP, `scripts/mcp_smoke.py` starts the server, lists the tools and calls the ones given
+as `name '{json args}'` pairs. It exits 1 on a tool error or a stdout line that isn't JSON-RPC, and deletes the
+session log it created:
+
+```sh
+scripts/mcp_smoke.py get_taste_profile '{"top_n": 5}' look_up_game '{"name": "Hades"}'
+```
+
 ## Working with agents
 
 Feature work is split into tasks for separate agents: rules in `AGENTS.md`, the plan and status board in
@@ -108,7 +127,7 @@ Feature work is split into tasks for separate agents: rules in `AGENTS.md`, the 
 
 - Negative weight for early abandonment instead of a zero floor.
 - Diversity: the top results can all come from one dominant sub-genre; an MMR-style re-rank would spread them out.
-- `reclassify_cache` is still a stub: re-run `is_excluded` over the corpus after the exclusion rules change.
+- Reclassify the cached corpus: re-run `is_excluded` over it after the exclusion rules change.
 
 ## Notes on SteamSpy usage
 

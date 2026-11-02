@@ -2,10 +2,9 @@
 
 import math
 import time
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import date
 from pathlib import Path
-from pprint import pprint
 from typing import Literal, TypedDict, cast
 
 from src.config import DF_TABLE_PATH, STEAM_BACKGROUND_CORPUS
@@ -109,13 +108,6 @@ def build_df_table(corpus: dict[int, CorpusRecord]) -> DfTable:
     }
 
     return df_table
-
-
-def reclassify_cache(corpus: dict[int, CorpusRecord]) -> None:
-    """WIP: re-run `is_excluded` over cached records after the exclusion rules change."""
-    for item in corpus:
-        if is_excluded(corpus[item]["genre"], corpus[item]["tags"]):
-            pass
 
 
 def build_steam_collection(fetch_pages: bool | None = None) -> DfTable:
@@ -264,7 +256,7 @@ def tag_vector(tags: dict[str, int], df_table: DfTable) -> TagVector:
 
 def build_profile(games: list[tuple[float, dict[str, int]]], df_table: DfTable) -> TagVector:
     """Sum of weight * tag_vector over (weight, tags) pairs. The whole dict is the vector: never truncate it."""
-    profile: Counter[str] = Counter()
+    profile: defaultdict[str, float] = defaultdict(float)
     for weight, tags in games:
         if weight <= 0:
             continue
@@ -289,8 +281,8 @@ def adjust_profile(
     Each reference is unit length too, and they share REFERENCE_WEIGHT between them.
     """
     profile_norm = norm(profile)
-    adjusted: Counter[str] = Counter(
-        {tag: value / profile_norm for tag, value in profile.items()} if profile_norm else {}
+    adjusted: defaultdict[str, float] = defaultdict(
+        float, {tag: value / profile_norm for tag, value in profile.items()} if profile_norm else {}
     )
 
     for reference in references:
@@ -332,33 +324,7 @@ def cosine(profile: TagVector, profile_norm: float, candidate: TagVector) -> flo
     return dot / (profile_norm * candidate_norm)
 
 
-def test_func() -> None:
-    """Scratch check of the `all` page shape."""
-    games_dict = get_games_by_page(0)
-
-    if games_dict is None:
-        print("Pages requested doesn't exist")
-    else:
-        print(type(games_dict).__name__, len(games_dict))
-
-        games_list = list(games_dict.keys())[:5]
-
-        print(games_list)
-        print(type(games_list[0]).__name__)
-
-        pprint(games_dict[games_list[0]])
-
-
 if __name__ == "__main__":
     fetch = input("Do you want to fetch the pages from steamspy: (yes/no)").lower().strip() == "yes"
     with status.running("building the tag corpus"):
         build_steam_collection(fetch_pages=fetch)
-    # cache_data = load_cache_status(STEAM_BACKGROUND_CORPUS)
-    # items_list = list(cache_data.items())
-    #
-    # # Grab items by index (remember Python starts counting at 0)
-    # item_1 = items_list[1]  # Index 1 (The 2nd item: '1172470')
-    # item_4 = items_list[4]  #
-    # print(item_1)
-    #
-    # print(item_4)

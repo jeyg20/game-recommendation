@@ -100,20 +100,20 @@ class Assistant:
         started = time.monotonic()
         tool = self.tools.get(name)
         if tool is None:
-            call: ToolCall = {"name": name, "args": args, "result": None, "error": f"unknown tool {name!r}"}
+            logged: ToolCall = {"name": name, "args": args, "result": None, "error": f"unknown tool {name!r}"}
         else:
             try:
                 with status.running(label):
-                    call = {"name": name, "args": args, "result": tool(**args)}
-            except Exception as e:  # the model gets the error and can recover or explain it
-                call = {"name": name, "args": args, "result": None, "error": f"{type(e).__name__}: {e}"}
+                    logged = {"name": name, "args": args, "result": tool(**args)}
+            except Exception as e:  # noqa: BLE001 - the model gets the error and can recover or explain it
+                logged = {"name": name, "args": args, "result": None, "error": f"{type(e).__name__}: {e}"}
 
         elapsed = f"{time.monotonic() - started:.1f}s"
-        if "error" in call:
-            status.say(style(f"  ✗ {label}: {call['error']}", "red"))
+        if "error" in logged:
+            status.say(style(f"  ✗ {label}: {logged['error']}", "red"))
         else:
             status.say(style(f"  ✓ {label}  {elapsed}", "grey"))
-        return call
+        return logged
 
     def send(self, prompt: str) -> tuple[str, list[ToolCall]]:
         """Answer one prompt, running whatever tools the model asks for, and log the turn. (reply, tool calls)"""

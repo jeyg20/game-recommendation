@@ -15,7 +15,7 @@ async def get_game_hltb(game_name: str) -> HowLongToBeatEntry | None:
         if results_list is not None and len(results_list) > 0:
             best_element = max(results_list, key=lambda element: element.similarity)
             return best_element
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - any HLTB failure is a miss: the library builds without times
         status.say(style(f"  ! HLTB search failed for {game_name!r}: {e}", "yellow"))
 
 

@@ -1,0 +1,152 @@
+from typing import cast
+
+import pytest
+
+from src import recommend as rec
+from src.recommend import (
+    MIN_STRICT_RESULTS,
+    fits_tags,
+    has_avoided_tag,
+    has_required_tags,
+    passes_floor,
+    pick_finalists,
+)
+from src.steamspy import GameSummary
+from src.tag_profile import CorpusRecord, DfTable
+
+
+def game(appid: int, positive: int = 900, negative: int = 100, name: str = "") -> GameSummary:
+    """A SteamSpy listing entry; only the fields the ranking reads matter."""
+    return cast(
+        GameSummary, {"appid": appid, "name": name or f"Game {appid}", "positive": positive, "negative": negative}
+    )
+
+
+def test_passes_floor_needs_enough_reviews_and_ratio() -> None:
+    assert passes_floor(game(1, positive=400, negative=100))  # 500 reviews, 80%
+    assert not passes_floor(game(1, positive=399, negative=100))  # 499 reviews
+    assert not passes_floor(game(1, positive=740, negative=260))  # 74%
+    assert not passes_floor(game(1, positive=0, negative=0))
+
+
+def test_pick_finalists_ranks_by_pool_hits_then_positive_reviews() -> None:
+    pools = {
+        "RPG": {"1": game(1, positive=1000), "2": game(2, positive=5000), "3": game(3)},
+        "Indie": {"1": game(1, positive=1000), "3": game(3)},
+        "Puzzle": {"1": game(1, positive=1000)},
+    }
+    assert [g["appid"] for g in pick_finalists(pools, set())] == [1, 3, 2]
+
+
+def test_pick_finalists_drops_excluded_shovelware_and_disallowed() -> None:
+    pools = {"RPG": {"1": game(1), "2": game(2, positive=10), "3": game(3), "4": game(4)}}
+    assert [g["appid"] for g in pick_finalists(pools, {1})] == [3, 4]
+    assert [g["appid"] for g in pick_finalists(pools, {1}, allowed_appids={4})] == [4]
+
+
+def test_has_required_tags_strict_and_relaxed() -> None:
+    tags = {"Shooter": 50, "Co-op": 40, "Action": 30}
+    assert has_required_tags(tags, ["shooter", "co-op"], relaxed=False)
+    assert not has_required_tags(tags, ["Shooter", "Horror"], relaxed=False)
+    assert has_required_tags(tags, ["Shooter", "Horror"], relaxed=True)
+
+
+def test_has_required_tags_ignores_footnote_tags() -> None:
+    tags = {f"Tag {i}": 100 - i for i in range(10)} | {"Shooter": 1}
+    assert not has_required_tags(tags, ["Shooter"], relaxed=False)
+
+
+def test_has_avoided_tag_only_among_the_strongest() -> None:
+    assert has_avoided_tag({"Horror": 50, "Action": 40}, ["horror"])
+    footnote = {f"Tag {i}": 100 - i for i in range(5)} | {"Horror": 1}
+    assert not has_avoided_tag(footnote, ["Horror"])
+
+
+def test_fits_tags_combines_both_rules() -> None:
+    tags = {"Shooter": 50, "Horror": 40}
+    assert fits_tags(tags, [], [], relaxed=False)
+    assert fits_tags(tags, ["Shooter"], [], relaxed=False)
+    assert not fits_tags(tags, ["Shooter"], ["Horror"], relaxed=False)
+    assert not fits_tags(tags, ["Puzzle"], [], relaxed=False)
+
+
+# ---------------------------------------------------------------------
+# recommend(): pools and tags are stubbed, so these exercise the strict / relaxed / unenforced paths offline
+# ---------------------------------------------------------------------
+def record(appid: int, tags: dict[str, int]) -> CorpusRecord:
+    return {"appid": appid, "genre": "", "tags": tags, "fetched_at": "2026-01-01", "status": "ok"}
+
+
+@pytest.fixture
+def stub_steamspy(monkeypatch: pytest.MonkeyPatch) -> dict[int, dict[str, int]]:
+    """appid -> tags served by enrich_tags; pools come from the same table (a game is in a tag's pool if it has it)."""
+    tags_by_appid: dict[int, dict[str, int]] = {}
+
+    def fetch_tag_pools(tags: list[str]) -> dict[str, dict[str, GameSummary]]:
+        pools: dict[str, dict[str, GameSummary]] = {}
+        for tag in tags:
+            pool = {str(appid): game(appid) for appid, game_tags in tags_by_appid.items() if tag in game_tags}
+            if pool:  # the real fetcher leaves out failed and empty pools
+                pools[tag] = pool
+        return pools
+
+    def enrich_tags(appids: list[int]) -> dict[int, CorpusRecord]:
+        return {appid: record(appid, tags_by_appid[appid]) for appid in appids if appid in tags_by_appid}
+
+    monkeypatch.setattr(rec, "fetch_tag_pools", fetch_tag_pools)
+    monkeypatch.setattr(rec, "enrich_tags", enrich_tags)
+    return tags_by_appid
+
+
+def test_recommend_without_requirements_ranks_by_cosine(
+    stub_steamspy: dict[int, dict[str, int]], df_table: DfTable
+) -> None:
+    stub_steamspy |= {1: {"RPG": 10}, 2: {"RPG": 10, "Horror": 10}, 3: {"Horror": 10, "RPG": 1}}
+    result = rec.recommend({"RPG": 1.0}, ["RPG", "Horror"], set(), df_table)
+    assert [r["appid"] for r in result["recommendations"]] == [1, 2, 3]
+    assert result["recommendations"][0]["score"] == pytest.approx(1.0)
+    assert result["recommendations"][0]["positive_ratio"] == pytest.approx(0.9)
+    assert not result["requirement_relaxed"]
+    assert result["requirement_unenforced"] == []
+
+
+def test_recommend_drops_excluded_and_avoided(stub_steamspy: dict[int, dict[str, int]], df_table: DfTable) -> None:
+    stub_steamspy |= {1: {"RPG": 10}, 2: {"RPG": 10, "Horror": 20}, 3: {"RPG": 10, "Indie": 5}}
+    result = rec.recommend({"RPG": 1.0}, ["RPG"], {3}, df_table, avoid_tags=["Horror"])
+    assert [r["appid"] for r in result["recommendations"]] == [1]
+
+
+def test_recommend_strict_requires_every_tag(stub_steamspy: dict[int, dict[str, int]], df_table: DfTable) -> None:
+    both = {appid: {"Shooter": 10, "Co-op": 10} for appid in range(1, MIN_STRICT_RESULTS + 1)}
+    stub_steamspy |= both | {100: {"Shooter": 10, "RPG": 10}, 101: {"RPG": 10}}
+    result = rec.recommend({"RPG": 1.0}, ["RPG"], set(), df_table, required_tags=["Shooter", "Co-op"])
+    assert {r["appid"] for r in result["recommendations"]} == set(both)
+    assert result["pool_tags"][:2] == ["Shooter", "Co-op"]
+    assert not result["requirement_relaxed"]
+
+
+def test_recommend_relaxes_when_too_few_have_every_tag(
+    stub_steamspy: dict[int, dict[str, int]], df_table: DfTable
+) -> None:
+    stub_steamspy |= {1: {"Shooter": 10, "Co-op": 10}, 2: {"Shooter": 10}, 3: {"Co-op": 10}, 4: {"RPG": 10}}
+    result = rec.recommend({"RPG": 1.0}, ["RPG"], set(), df_table, required_tags=["Shooter", "Co-op"])
+    assert {r["appid"] for r in result["recommendations"]} == {1, 2, 3}
+    assert result["requirement_relaxed"]
+
+
+def test_recommend_never_relaxes_a_single_requirement(
+    stub_steamspy: dict[int, dict[str, int]], df_table: DfTable
+) -> None:
+    stub_steamspy |= {1: {"Shooter": 10}, 2: {"RPG": 10}}
+    result = rec.recommend({"RPG": 1.0}, ["RPG"], set(), df_table, required_tags=["Shooter"])
+    assert [r["appid"] for r in result["recommendations"]] == [1]
+    assert not result["requirement_relaxed"]
+
+
+def test_recommend_reports_required_tags_with_no_pool(
+    stub_steamspy: dict[int, dict[str, int]], df_table: DfTable
+) -> None:
+    stub_steamspy |= {1: {"RPG": 10}, 2: {"Indie": 10}}
+    result = rec.recommend({"RPG": 1.0}, ["RPG", "Indie"], set(), df_table, required_tags=["Nonexistent"])
+    assert result["requirement_unenforced"] == ["Nonexistent"]
+    assert {r["appid"] for r in result["recommendations"]} == {1, 2}  # nothing left to filter on
