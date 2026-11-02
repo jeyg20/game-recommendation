@@ -6,6 +6,8 @@ import pytest
 from src import recommend as rec
 from src.recommend import (
     MIN_STRICT_RESULTS,
+    Recommendation,
+    diversify,
     fits_tags,
     has_avoided_tag,
     has_required_tags,
@@ -72,6 +74,36 @@ def test_fits_tags_combines_both_rules() -> None:
     assert not fits_tags(tags, ["Puzzle"], [], relaxed=False)
 
 
+def pick(appid: int, score: float) -> Recommendation:
+    return {"appid": appid, "name": f"Game {appid}", "score": score, "positive_ratio": 0.9, "matched_tags": []}
+
+
+# three near-duplicate survival-crafts and one different game that fits slightly worse
+SURVIVAL = {"Survival": 1.0, "Crafting": 1.0, "Open World": 1.0}
+NEAR_DUPLICATES = {1: SURVIVAL, 2: SURVIVAL | {"Base Building": 0.1}, 3: SURVIVAL | {"Dinosaurs": 0.1}}
+DIFFERENT = {4: {"Roguelike": 1.0, "Deckbuilding": 1.0, "Crafting": 0.2}}
+
+
+def test_diversify_moves_the_different_game_up() -> None:
+    picks = [pick(1, 0.90), pick(2, 0.89), pick(3, 0.88), pick(4, 0.80)]
+    order = diversify(picks, NEAR_DUPLICATES | DIFFERENT)
+    assert [rec["appid"] for rec in order] == [1, 4, 2, 3]
+    assert [rec["score"] for rec in order] == [0.90, 0.80, 0.89, 0.88]  # the fit scores are untouched
+
+
+def test_diversify_with_lambda_one_keeps_the_fit_order(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(rec, "DIVERSITY_LAMBDA", 1.0)
+    picks = [pick(1, 0.90), pick(2, 0.89), pick(3, 0.88), pick(4, 0.80)]
+    assert diversify(picks, NEAR_DUPLICATES | DIFFERENT) == picks
+
+
+def test_diversify_leaves_the_tail_in_place(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(rec, "DIVERSITY_POOL", 3)
+    picks = [pick(1, 0.90), pick(2, 0.89), pick(3, 0.88), pick(4, 0.80)]
+    vectors = {appid: vector for appid, vector in (NEAR_DUPLICATES | DIFFERENT).items() if appid <= 3}
+    assert [rec["appid"] for rec in diversify(picks, vectors)] == [1, 2, 3, 4]
+
+
 # ---------------------------------------------------------------------
 # recommend(): pools and tags are stubbed, so these exercise the strict / relaxed / unenforced paths offline
 # ---------------------------------------------------------------------
@@ -110,6 +142,20 @@ def test_recommend_without_requirements_ranks_by_cosine(
     assert result["recommendations"][0]["positive_ratio"] == pytest.approx(0.9)
     assert not result["requirement_relaxed"]
     assert result["requirement_unenforced"] == []
+
+
+def test_recommend_spreads_near_duplicates(stub_steamspy: dict[int, dict[str, int]], df_table: DfTable) -> None:
+    stub_steamspy |= {
+        1: {"RPG": 10, "Co-op": 10},
+        2: {"RPG": 10, "Co-op": 9},
+        3: {"RPG": 9, "Co-op": 10},
+        4: {"RPG": 10, "Horror": 10},
+    }
+    profile = {"RPG": 1.0, "Co-op": 1.0, "Horror": 0.9}
+    result = rec.recommend(profile, ["RPG", "Co-op", "Horror"], set(), df_table)
+    by_fit = [r["appid"] for r in sorted(result["recommendations"], key=lambda r: r["score"], reverse=True)]
+    assert by_fit[-1] == 4  # the worst fit of the four...
+    assert [r["appid"] for r in result["recommendations"]][:2] == [by_fit[0], 4]  # ...is placed second
 
 
 def test_recommend_drops_excluded_and_avoided(stub_steamspy: dict[int, dict[str, int]], df_table: DfTable) -> None:

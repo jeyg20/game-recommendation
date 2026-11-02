@@ -24,6 +24,8 @@ MIN_REVIEWS = 500  # shovelware floor: positive + negative
 MIN_POSITIVE_RATIO = 0.75
 FINALISTS = 100
 MIN_STRICT_RESULTS = 10  # fewer picks than this carry every required tag -> accept any one of them instead
+DIVERSITY_LAMBDA = 0.75  # MMR trade-off: 1.0 = pure fit order, lower = push near-duplicates of earlier picks down
+DIVERSITY_POOL = 30  # only the head is re-ranked; the tail keeps its fit order
 
 
 class TagPoolCache(TypedDict):
@@ -173,6 +175,31 @@ def score(
     }
 
 
+def diversify(picks: list[Recommendation], vectors: dict[int, TagVector]) -> list[Recommendation]:
+    """Maximal marginal relevance over the first DIVERSITY_POOL picks (sorted best first); scores stay as they are.
+
+    Picks sharing most tags score almost the same, so a pure fit order shows ten takes on one sub-genre. Each slot
+    goes to the pick with the best `λ * score - (1 - λ) * max similarity to the picks already placed`.
+    `vectors` holds each head pick's tag vector, keyed by appid.
+    """
+    remaining, tail = picks[:DIVERSITY_POOL], picks[DIVERSITY_POOL:]
+    norms = {appid: norm(vector) for appid, vector in vectors.items()}
+    max_sim = {rec["appid"]: 0.0 for rec in remaining}  # to the closest pick placed so far
+    placed: list[Recommendation] = []
+    while remaining:
+        # max() keeps the first of equal values, so ties (and λ = 1) keep the fit order
+        best = max(
+            remaining, key=lambda rec: DIVERSITY_LAMBDA * rec["score"] - (1 - DIVERSITY_LAMBDA) * max_sim[rec["appid"]]
+        )
+        remaining.remove(best)
+        placed.append(best)
+        chosen = vectors[best["appid"]]
+        for rec in remaining:
+            sim = cosine(chosen, norms[best["appid"]], vectors[rec["appid"]])
+            max_sim[rec["appid"]] = max(max_sim[rec["appid"]], sim)
+    return placed + tail
+
+
 AVOID_TOP_TAGS = 5  # a candidate is dropped when an avoided tag is among its strongest tags
 
 
@@ -240,7 +267,8 @@ def recommend(
             rec["positive_ratio"] = positive_ratio(game)
             picks.append(rec)
         picks.sort(key=lambda rec: rec["score"], reverse=True)
-        return picks
+        head = picks[:DIVERSITY_POOL]
+        return diversify(picks, {rec["appid"]: tag_vector(records[rec["appid"]]["tags"], df_table) for rec in head})
 
     relaxed = False
     if enforced:
