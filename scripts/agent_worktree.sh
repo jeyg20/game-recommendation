@@ -16,7 +16,5 @@ dir="$repo/../gamer_guide-$id"
 branch="feat/$id-$slug"
 
 git -C "$repo" worktree add "$dir" -b "$branch" ai-created
-cp "$repo/.env" "$dir/.env"
-cp -r "$repo/data" "$dir/data"  # a private copy: parallel agents never write the same cache file
-(cd "$dir" && uv sync -q)
-echo "ready: $dir on $branch"
+(cd "$dir" && "$repo/scripts/worktree_setup.sh")
+echo "on $branch"

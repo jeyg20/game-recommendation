@@ -19,8 +19,8 @@ Status: `todo` → `running` → `review` → `merged` (or `blocked: <why>`). Up
 | F02 | [Did past picks work?](tasks/F02-pick-outcomes.md) | 1 | T00 | `feat/f02-pick-outcomes` | todo | |
 | F03 | [Wishlist](tasks/F03-wishlist.md) | 1 | T00 | `feat/f03-wishlist` | todo | |
 | F04 | [Prices and sales](tasks/F04-prices.md) | 1 | T00 | `feat/f04-prices` | todo | |
-| F05 | [Explain one pick](tasks/F05-explain-pick.md) | 1 | T00 | `feat/f05-explain-pick` | todo | |
-| F06 | [Export a report](tasks/F06-export.md) | 1 | T00 | `feat/f06-export` | todo | |
+| F05 | [Explain one pick](tasks/F05-explain-pick.md) | 1 | T00 | `feat/f05-explain-pick` | running | T3 child thread (automated) |
+| F06 | [Export a report](tasks/F06-export.md) | 1 | T00 | `feat/f06-export` | running | T3 child thread (automated) |
 | R01 | [Variety in the top picks](tasks/R01-diversity.md) | 2 | T01 | `feat/r01-diversity` | todo | |
 | R02 | [Abandoned games count against their tags](tasks/R02-abandonment.md) | 2 | T01 | `feat/r02-abandonment` | todo | |
 | R03 | [Recent tastes count more](tasks/R03-recency.md) | 2 | R02 | `feat/r03-recency` | todo | |
@@ -91,6 +91,21 @@ Registry conflicts (two branches appending to `TOOLS`) are expected and trivial:
    > working around it.
 
 3. Set the row to `running`.
+
+## Automated mode (T3 Code)
+
+The coordinator session launches the agents itself, as T3 Code child threads, instead of you opening one session
+per worktree.
+
+- The T3 project has a **Worktree setup** script (`scripts/worktree_setup.sh`, run on worktree create). It copies
+  `.env` and `data/` from the main checkout and runs `uv sync`. It skips a copy that already exists, so rerunning
+  it is safe.
+- Each agent is a `delegate_task` with `isolation: "worktree"`, Claude only, **effort at most `medium`**, and at
+  most **two running at once** (the owner's limits). The brief is the launch prompt above. It also tells the agent
+  to `git switch -c feat/<id>-<slug>` first, and to run `scripts/worktree_setup.sh` if `.env` or `data/` is missing.
+- Signing: commits are SSH-signed. Agents commit with `SSH_AUTH_SOCK` set to the socket the owner gives. When
+  signing fails, they leave the work staged and say so, and the coordinator commits it.
+- When a child hands back, the coordinator reviews it as below, merges it, and starts the next task in merge order.
 
 ## Reviewing a hand-back
 
