@@ -15,13 +15,13 @@ Status: `todo` → `running` → `review` → `merged` (or `blocked: <why>`). Up
 | T00 | [Test harness and a green gate](tasks/T00-test-harness.md) | 0 | – | `feat/t00-test-harness` | merged | `6760961`; review fix: smoke deletes only its own logs |
 | T01 | [Offline evaluation (hide your own games)](tasks/T01-evaluation.md) | 0 | T00 | `feat/t01-evaluation` | merged | `598ae98`. Baseline 2026-11-01 (after B01): recall@10 0.00, recall@25 0.20, MRR 0.015, never retrieved 5/10, diversity 0.766 |
 | B01 | [Stale tag pools when SteamSpy returns nothing](tasks/B01-stale-tag-pools.md) | 1 | T00 | `feat/b01-stale-tag-pools` | merged | `6522173`. Follow-up: the empty-tag set lasts the process (a long-lived Desktop server never re-asks until restart) |
-| F01 | [Ratings and "not interested"](tasks/F01-ratings.md) | 1 | T00 | `feat/f01-ratings` | running | T3 child thread (automated) |
+| F01 | [Ratings and "not interested"](tasks/F01-ratings.md) | 1 | T00 | `feat/f01-ratings` | merged | `60637c1`. Disliked / not-interested games stay hidden even with `use_saved_preferences=False`. Follow-up: `explain_pick` steered mode ignores ratings (fold into the `noted_taste` dedupe) |
 | F02 | [Did past picks work?](tasks/F02-pick-outcomes.md) | 1 | T00 | `feat/f02-pick-outcomes` | merged | `ac0c027`. `pick_outcomes(games)` takes the library (avoids a circular import); `hit_rate` = bought and played over 2 h, plus `buy_rate`. First live numbers: 34 picks, 1 bought (Enshrouded, 0.7 h) |
 | F03 | [Wishlist](tasks/F03-wishlist.md) | 1 | T00 | `feat/f03-wishlist` | todo | |
-| F04 | [Prices and sales](tasks/F04-prices.md) | 1 | T00 | `feat/f04-prices` | todo | |
+| F04 | [Prices and sales](tasks/F04-prices.md) | 1 | T00 | `feat/f04-prices` | running | T3 child thread (automated) |
 | F05 | [Explain one pick](tasks/F05-explain-pick.md) | 1 | T00 | `feat/f05-explain-pick` | merged | `d60a0fc`. Follow-ups: `noted_taste` copies the steering in `recommend_games` (dedupe after F01/F03/F04); `steered=True` sees only the noted draft and saved preferences, not one-off `recommend_games` arguments; "Hades" resolves to Hades II (`find_game` takes the first store hit) |
 | F06 | [Export a report](tasks/F06-export.md) | 1 | T00 | `feat/f06-export` | merged | `48c9e33`. `export.to_markdown` / `to_html` are pure (optional `day`); unknown pick fields become extra columns |
-| R01 | [Variety in the top picks](tasks/R01-diversity.md) | 2 | T01 | `feat/r01-diversity` | running | T3 child thread, alongside F01 (`recommend.py` only, no overlap); merges before F04, which rebases onto it |
+| R01 | [Variety in the top picks](tasks/R01-diversity.md) | 2 | T01 | `feat/r01-diversity` | running | T3 child thread (restarted after an interruption, same worktree), alongside F04 (`recommend.py` only, no overlap); merges before F04, which rebases onto it |
 | R02 | [Abandoned games count against their tags](tasks/R02-abandonment.md) | 2 | T01 | `feat/r02-abandonment` | todo | |
 | R03 | [Recent tastes count more](tasks/R03-recency.md) | 2 | R02 | `feat/r03-recency` | todo | |
 | R04 | [Wildcard picks outside the bubble](tasks/R04-wildcards.md) | 2 | R02 | `feat/r04-wildcards` | todo | |
