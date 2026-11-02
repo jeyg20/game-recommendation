@@ -28,7 +28,15 @@ def listing(appid: int, positive: int = 900, negative: int = 100) -> GameSummary
 
 
 def pick(appid: int) -> Recommendation:
-    return {"appid": appid, "name": f"Pick {appid}", "score": 0.5, "positive_ratio": 0.9, "matched_tags": []}
+    return {
+        "appid": appid,
+        "name": f"Pick {appid}",
+        "score": 0.5,
+        "positive_ratio": 0.9,
+        "matched_tags": [],
+        "price_usd": None,
+        "discount_percent": None,
+    }
 
 
 # held-out game -> where the fake ranking puts it once it's hidden (None: never retrieved)

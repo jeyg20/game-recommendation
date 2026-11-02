@@ -141,19 +141,39 @@ def bar(score: float) -> str:
     return style(blocks.ljust(BAR_CELLS), color) + f" {score:.2f}"
 
 
-def table(title: str, picks: Sequence[Mapping[str, object]], extra_header: str, extra: str) -> str:
-    """One pick per row: rank, name, fit bar, an extra column (rating or hours), matched tags."""
+PRICE_CELLS = 12  # "-50% $149.99"
+
+
+def price(pick: Mapping[str, object]) -> str:
+    """`$29.99`, `-50% $14.99` or `free`; `-` when SteamSpy had no price."""
+    usd, discount = pick.get("price_usd"), pick.get("discount_percent")
+    if not isinstance(usd, int | float):
+        return "-"
+    cost = f"${usd:.2f}" if usd else "free"
+    return f"-{discount}% {cost}" if isinstance(discount, int) and discount > 0 else cost
+
+
+def table(
+    title: str, picks: Sequence[Mapping[str, object]], extra_header: str, extra: str, with_price: bool = False
+) -> str:
+    """One pick per row: rank, name, fit bar, an extra column (rating or hours), price if asked, matched tags."""
     if not picks:
         return ""
     size = width()
     name_size = min(max(len(str(pick["name"])) for pick in picks), 34)
-    fixed = 2 + 3 + 2 + name_size + 2 + BAR_CELLS + 5 + 2 + 5 + 2
+    price_size = PRICE_CELLS + 2 if with_price else 0
+    fixed = 2 + 3 + 2 + name_size + 2 + BAR_CELLS + 5 + 2 + 5 + 2 + price_size
     why_size = max(size - fixed, 12)
 
     rows = [
         "",
         style(title, "bold", "cyan"),
-        style(f"  {'#':>3}  {'Game':<{name_size}}  {'Fit':<{BAR_CELLS + 5}}  {extra_header:>5}  Why", "grey"),
+        style(
+            f"  {'#':>3}  {'Game':<{name_size}}  {'Fit':<{BAR_CELLS + 5}}  {extra_header:>5}  "
+            + (f"{'Price':>{PRICE_CELLS}}  " if with_price else "")
+            + "Why",
+            "grey",
+        ),
     ]
     for rank, pick in enumerate(picks, start=1):
         value = pick.get(extra)
@@ -166,8 +186,9 @@ def table(title: str, picks: Sequence[Mapping[str, object]], extra_header: str, 
         score = pick.get("score")
         fit = bar(float(score)) if isinstance(score, int | float) else "-"
         name = pad(style(truncate(str(pick["name"]), name_size), "bold"), name_size)
+        cost = f"{price(pick):>{PRICE_CELLS}}  " if with_price else ""
         rows.append(
-            f"  {style(f'{rank:>3}', 'grey')}  {name}  {fit}  {cell:>5}  {style(truncate(tags, why_size), 'grey')}"
+            f"  {style(f'{rank:>3}', 'grey')}  {name}  {fit}  {cell:>5}  {cost}{style(truncate(tags, why_size), 'grey')}"
         )
     return "\n".join(rows)
 
@@ -193,7 +214,9 @@ def recommendation_tables(result: Mapping[str, object]) -> str:
     backlog = result.get("backlog")
     applied = result.get("applied")
     blocks = [
-        table("Recommended for you", picks, "Liked", "positive_ratio") if isinstance(picks, list) else "",
+        table("Recommended for you", picks, "Liked", "positive_ratio", with_price=True)
+        if isinstance(picks, list)
+        else "",
         steer_summary(applied) if isinstance(applied, Mapping) else "",
         table("From your backlog", backlog, "Hours", "playtime_hours") if isinstance(backlog, list) else "",
     ]

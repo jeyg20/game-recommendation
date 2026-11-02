@@ -39,6 +39,8 @@ class Recommendation(TypedDict):
     score: float  # cosine against the profile, [0, 1]
     positive_ratio: float | None  # None for backlog games (no review counts on hand)
     matched_tags: list[str]  # the candidate's strongest tags that are also strong in the profile
+    price_usd: float | None  # SteamSpy's US price (after any discount), up to a day old; None for backlog games
+    discount_percent: int | None  # 0 when not on sale; None for backlog games
 
 
 # tags whose fetch came back empty in this process: SteamSpy keeps returning [] for some big tags, so asking again
@@ -99,6 +101,20 @@ def fetch_tag_pools(tags: list[str]) -> tuple[dict[str, dict[str, GameSummary]],
 def positive_ratio(game: GameSummary) -> float:
     total = game["positive"] + game["negative"]
     return game["positive"] / total if total else 0.0
+
+
+def parse_int(value: object) -> int | None:
+    """SteamSpy's numeric strings (`"2999"`, `"0"`); None when empty, missing or garbage."""
+    try:
+        return int(str(value))
+    except ValueError:
+        return None
+
+
+def price_usd(game: GameSummary) -> float | None:
+    """The current price in dollars: SteamSpy's `price` is US cents as a string."""
+    cents = parse_int(game.get("price"))
+    return cents / 100 if cents is not None else None
 
 
 def passes_floor(game: GameSummary) -> bool:
@@ -172,6 +188,8 @@ def score(
         "score": cosine(profile, profile_norm, vector),
         "positive_ratio": None,
         "matched_tags": matched_tags(vector, profile),
+        "price_usd": None,
+        "discount_percent": None,
     }
 
 
@@ -265,6 +283,7 @@ def recommend(
                 continue
             rec = score(int(game["appid"]), game["name"], record["tags"], profile, profile_norm, df_table)
             rec["positive_ratio"] = positive_ratio(game)
+            rec["price_usd"], rec["discount_percent"] = price_usd(game), parse_int(game.get("discount"))
             picks.append(rec)
         picks.sort(key=lambda rec: rec["score"], reverse=True)
         head = picks[:DIVERSITY_POOL]

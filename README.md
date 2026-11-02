@@ -75,6 +75,10 @@ must-have and avoid rules. Games rated with `rate_games`: liked ones join the re
 subtracted (unit length, sharing a weight of 0.5, tags pushed to zero or below dropped), and disliked or
 not-interested games are never recommended again.
 
+Prices: each pick carries `price_usd` (after any discount) and `discount_percent` from SteamSpy's tag listings, so
+they're US prices up to a day old (backlog picks have none). `recommend_games(on_sale_only=True)` keeps only
+discounted picks, which can be fewer than `limit`.
+
 **When it recommends.** Only when you ask for picks ("recommend", "what should I play", "that's it") or send a
 complete request in one message. While you're still describing what you want, it notes each detail with
 `note_request`, confirms it, and asks if there's more; everything noted is applied when it does recommend.

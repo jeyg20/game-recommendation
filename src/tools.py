@@ -162,6 +162,8 @@ def compact(recommendations: list[Recommendation], limit: int) -> list[dict[str,
             "score": round(rec["score"], 3),
             "positive_ratio": round(rec["positive_ratio"], 2) if rec["positive_ratio"] is not None else None,
             "matched_tags": rec["matched_tags"],
+            "price_usd": rec["price_usd"],
+            "discount_percent": rec["discount_percent"],
         }
         for rec in recommendations[:limit]
     ]
@@ -194,13 +196,15 @@ def recommend_games(
     limit: int = 10,
     include_backlog: bool = True,
     use_saved_preferences: bool = True,
+    on_sale_only: bool = False,
 ) -> dict[str, object]:
     """Rank games the player doesn't own against their taste profile, optionally steered for this request.
 
     Everything recorded with note_request this session is applied automatically, so only pass what is new.
 
     Candidates come from SteamSpy (popular, well-reviewed games). Each result has a cosine score in [0, 1] and the
-    tags it shares with the profile, which is the reason it was picked. New tag pools and game tags are fetched at
+    tags it shares with the profile, which is the reason it was picked, plus its price: SteamSpy's US price in dollars
+    (after any discount) and discount_percent, up to a day old. New tag pools and game tags are fetched at
     ~1 request/second, so a first run with new tags can take a minute or two.
 
     Args:
@@ -211,6 +215,7 @@ def recommend_games(
       limit: How many recommendations (and backlog games) to return.
       include_backlog: Also rank owned games the player never launched or only tried briefly.
       use_saved_preferences: Apply the player's saved preferences on top of this request's.
+      on_sale_only: Keep only discounted picks ("which of my picks are on sale?"); may return fewer than limit.
     """
     player_games, games, df_table, profile = ensure_loaded()
     saved: Preferences = (
@@ -254,6 +259,8 @@ def recommend_games(
     )
     ranked = recommend(taste, top_tags(taste, 8), excluded, df_table, avoid, required_tags=required)
     recommendations = ranked["recommendations"]
+    if on_sale_only:
+        recommendations = [rec for rec in recommendations if (rec["discount_percent"] or 0) > 0]
 
     result: dict[str, object] = {
         "applied": {
