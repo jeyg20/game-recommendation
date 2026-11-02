@@ -21,8 +21,8 @@ Status: `todo` → `running` → `review` → `merged` (or `blocked: <why>`). Up
 | F04 | [Prices and sales](tasks/F04-prices.md) | 1 | T00 | `feat/f04-prices` | running | T3 child thread (automated) |
 | F05 | [Explain one pick](tasks/F05-explain-pick.md) | 1 | T00 | `feat/f05-explain-pick` | merged | `d60a0fc`. Follow-ups: `noted_taste` copies the steering in `recommend_games` (dedupe after F01/F03/F04); `steered=True` sees only the noted draft and saved preferences, not one-off `recommend_games` arguments; "Hades" resolves to Hades II (`find_game` takes the first store hit) |
 | F06 | [Export a report](tasks/F06-export.md) | 1 | T00 | `feat/f06-export` | merged | `48c9e33`. `export.to_markdown` / `to_html` are pure (optional `day`); unknown pick fields become extra columns |
-| R01 | [Variety in the top picks](tasks/R01-diversity.md) | 2 | T01 | `feat/r01-diversity` | running | T3 child thread (restarted after an interruption, same worktree), alongside F04 (`recommend.py` only, no overlap); merges before F04, which rebases onto it |
-| R02 | [Abandoned games count against their tags](tasks/R02-abandonment.md) | 2 | T01 | `feat/r02-abandonment` | todo | |
+| R01 | [Variety in the top picks](tasks/R01-diversity.md) | 2 | T01 | `feat/r01-diversity` | merged | `d24f680`. λ 0.75. Evaluate 2026-11-02: diversity 0.766 → 0.445, recall@25 0.20 → 0.10 (−1 game, the limit), recall@10 0.00 → 0.10, MRR 0.014 → 0.024 |
+| R02 | [Abandoned games count against their tags](tasks/R02-abandonment.md) | 2 | T01 | `feat/r02-abandonment` | running | T3 child thread, alongside F04 (only the backlog filter in `recommend_games`) |
 | R03 | [Recent tastes count more](tasks/R03-recency.md) | 2 | R02 | `feat/r03-recency` | todo | |
 | R04 | [Wildcard picks outside the bubble](tasks/R04-wildcards.md) | 2 | R02 | `feat/r04-wildcards` | todo | |
 | R05 | [Length and price limits](tasks/R05-constraints.md) | 2 | F04, R04 | `feat/r05-constraints` | todo | |
