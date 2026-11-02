@@ -39,36 +39,59 @@ class Recommendation(TypedDict):
     matched_tags: list[str]  # the candidate's strongest tags that are also strong in the profile
 
 
-def fetch_tag_pools(tags: list[str]) -> dict[str, dict[str, GameSummary]]:
-    """tag -> SteamSpy `tag` listing. Cached per tag for a day; fresh fetches are spaced 1 req/sec."""
+# tags whose fetch came back empty in this process: SteamSpy keeps returning [] for some big tags, so asking again
+# on every call only costs a request each; their cached pool serves the rest of the run
+_empty_this_run: set[str] = set()
+
+
+def fetch_tag_pools(tags: list[str]) -> tuple[dict[str, dict[str, GameSummary]], dict[str, str]]:
+    """tag -> SteamSpy `tag` listing, plus tag -> fetched_at for pools served stale.
+
+    Cached per tag for a day; fresh fetches are spaced 1 req/sec. When a refetch fails or comes back empty, an older
+    cached pool is used instead, however old: SteamSpy has returned [] for its biggest tags (Open World, Survival,
+    Multiplayer) for days, and dropping them would leave the player's strongest tags out of every candidate set.
+    """
     cache: dict[str, TagPoolCache] = {}
     if TAG_POOLS_PATH.is_file():
         cache = cast(dict[str, TagPoolCache], read_json(TAG_POOLS_PATH))
 
     pools: dict[str, dict[str, GameSummary]] = {}
+    stale: dict[str, str] = {}
     for n, tag in enumerate(tags, start=1):
         cached = cache.get(tag)
-        if (
-            cached is not None
-            and (date.today() - date.fromisoformat(cached["fetched_at"])).days < TAG_POOL_MAX_AGE_DAYS
+        if cached is not None and (
+            tag in _empty_this_run
+            or (date.today() - date.fromisoformat(cached["fetched_at"])).days < TAG_POOL_MAX_AGE_DAYS
         ):
             pools[tag] = cached["games"]
+            if tag in _empty_this_run:
+                stale[tag] = cached["fetched_at"]
             continue
 
         status.update(f"fetching games tagged {tag!r}", n, len(tags))
         games = get_games_by_tag(tag)
         time.sleep(1)
-        if games is None:
-            status.say(style(f"  ! SteamSpy tag pool {tag!r} failed, skipping it", "yellow"))
+        if not games:  # not cached: a failed or empty listing is a miss, and caching it would repeat it all day
+            if games is not None:
+                _empty_this_run.add(tag)
+            reason = "failed" if games is None else "returned nothing"
+            if cached is not None:  # the cache entry stays as it was, so a later good fetch still replaces it
+                status.say(
+                    style(f"  ! using cached {tag!r} pool from {cached['fetched_at']} (SteamSpy {reason})", "yellow")
+                )
+                pools[tag] = cached["games"]
+                stale[tag] = cached["fetched_at"]
+            elif games is None:
+                status.say(style(f"  ! SteamSpy tag pool {tag!r} failed, skipping it", "yellow"))
+            else:
+                status.say(style(f"  ! tag pool {tag!r} is empty (not in SteamSpy's vocabulary?)", "yellow"))
             continue
-        if not games:  # not cached: an empty listing is a miss, and caching it would repeat it all day
-            status.say(style(f"  ! tag pool {tag!r} is empty (not in SteamSpy's vocabulary?)", "yellow"))
-            continue
+        _empty_this_run.discard(tag)
         pools[tag] = games
         cache[tag] = {"fetched_at": date.today().isoformat(), "games": games}
         write_json(TAG_POOLS_PATH, cache)
 
-    return pools
+    return pools, stale
 
 
 def positive_ratio(game: GameSummary) -> float:
@@ -181,6 +204,7 @@ class RecommendResult(TypedDict):
     pool_tags: list[str]  # the tag pools candidates were drawn from
     requirement_relaxed: bool  # too few games had every required tag, so any one of them was enough
     requirement_unenforced: list[str]  # required tags whose pool failed to fetch or came back empty
+    stale_pools: dict[str, str]  # tag -> fetched_at, for pools served from an old cache because SteamSpy had nothing
 
 
 def recommend(
@@ -200,7 +224,7 @@ def recommend(
     """
     required = required_tags or []
     pool_tags = [*required, *(tag for tag in top if tag not in required)][: max(len(top), len(required) + 4)]
-    pools = fetch_tag_pools(pool_tags)
+    pools, stale_pools = fetch_tag_pools(pool_tags)
     enforced = [tag for tag in required if tag in pools]  # a failed or empty pool can't filter anything
     profile_norm = norm(profile)
 
@@ -234,6 +258,7 @@ def recommend(
         "pool_tags": pool_tags,
         "requirement_relaxed": relaxed,
         "requirement_unenforced": [tag for tag in required if tag not in enforced],
+        "stale_pools": stale_pools,
     }
 
 

@@ -1,3 +1,4 @@
+from datetime import date
 from typing import cast
 
 import pytest
@@ -12,6 +13,7 @@ from src.recommend import (
     pick_finalists,
 )
 from src.steamspy import GameSummary
+from src.storage import read_json, write_json
 from src.tag_profile import CorpusRecord, DfTable
 
 
@@ -82,13 +84,13 @@ def stub_steamspy(monkeypatch: pytest.MonkeyPatch) -> dict[int, dict[str, int]]:
     """appid -> tags served by enrich_tags; pools come from the same table (a game is in a tag's pool if it has it)."""
     tags_by_appid: dict[int, dict[str, int]] = {}
 
-    def fetch_tag_pools(tags: list[str]) -> dict[str, dict[str, GameSummary]]:
+    def fetch_tag_pools(tags: list[str]) -> tuple[dict[str, dict[str, GameSummary]], dict[str, str]]:
         pools: dict[str, dict[str, GameSummary]] = {}
         for tag in tags:
             pool = {str(appid): game(appid) for appid, game_tags in tags_by_appid.items() if tag in game_tags}
             if pool:  # the real fetcher leaves out failed and empty pools
                 pools[tag] = pool
-        return pools
+        return pools, {}
 
     def enrich_tags(appids: list[int]) -> dict[int, CorpusRecord]:
         return {appid: record(appid, tags_by_appid[appid]) for appid in appids if appid in tags_by_appid}
@@ -150,3 +152,82 @@ def test_recommend_reports_required_tags_with_no_pool(
     result = rec.recommend({"RPG": 1.0}, ["RPG", "Indie"], set(), df_table, required_tags=["Nonexistent"])
     assert result["requirement_unenforced"] == ["Nonexistent"]
     assert {r["appid"] for r in result["recommendations"]} == {1, 2}  # nothing left to filter on
+
+
+@pytest.fixture
+def steamspy_tags(monkeypatch: pytest.MonkeyPatch) -> tuple[dict[str, dict[str, GameSummary] | None], list[str]]:
+    """tag -> what a fake get_games_by_tag returns (missing = []), and the list of tags it was asked for."""
+    served: dict[str, dict[str, GameSummary] | None] = {}
+    requested: list[str] = []
+
+    def get_games_by_tag(tag: str) -> dict[str, GameSummary] | None:
+        requested.append(tag)
+        return served.get(tag, {})
+
+    monkeypatch.setattr(rec, "get_games_by_tag", get_games_by_tag)
+    monkeypatch.setattr(rec.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(rec, "_empty_this_run", set())
+    return served, requested
+
+
+def cache_pool(tag: str, fetched_at: str, games: dict[str, GameSummary]) -> None:
+    cache = read_json(rec.TAG_POOLS_PATH) if rec.TAG_POOLS_PATH.is_file() else {}
+    write_json(rec.TAG_POOLS_PATH, {**cache, tag: {"fetched_at": fetched_at, "games": games}})
+
+
+OLD = "2026-10-27"
+OLD_POOL = {"1": game(1, name="Old")}
+
+
+@pytest.mark.parametrize("response", [{}, None], ids=["empty", "failed"])
+def test_fetch_tag_pools_falls_back_to_a_stale_pool(
+    steamspy_tags: tuple[dict[str, dict[str, GameSummary] | None], list[str]],
+    response: dict[str, GameSummary] | None,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    served, _ = steamspy_tags
+    served["Open World"] = response
+    cache_pool("Open World", OLD, OLD_POOL)
+    pools, stale = rec.fetch_tag_pools(["Open World"])
+    assert pools == {"Open World": OLD_POOL}
+    assert stale == {"Open World": OLD}
+    assert f"using cached 'Open World' pool from {OLD}" in capsys.readouterr().out
+    assert read_json(rec.TAG_POOLS_PATH)["Open World"]["fetched_at"] == OLD  # cache entry left alone
+
+
+def test_fetch_tag_pools_asks_once_per_run_for_an_empty_tag(
+    steamspy_tags: tuple[dict[str, dict[str, GameSummary] | None], list[str]],
+) -> None:
+    _, requested = steamspy_tags
+    cache_pool("Open World", OLD, OLD_POOL)
+    rec.fetch_tag_pools(["Open World"])
+    pools, stale = rec.fetch_tag_pools(["Open World"])
+    assert requested == ["Open World"]
+    assert pools == {"Open World": OLD_POOL} and stale == {"Open World": OLD}
+
+
+def test_fetch_tag_pools_skips_an_empty_tag_with_no_cache(
+    steamspy_tags: tuple[dict[str, dict[str, GameSummary] | None], list[str]],
+) -> None:
+    assert rec.fetch_tag_pools(["Nonexistent"]) == ({}, {})
+    assert not rec.TAG_POOLS_PATH.is_file()
+
+
+def test_fetch_tag_pools_uses_a_fresh_pool_without_asking(
+    steamspy_tags: tuple[dict[str, dict[str, GameSummary] | None], list[str]],
+) -> None:
+    _, requested = steamspy_tags
+    cache_pool("RPG", date.today().isoformat(), OLD_POOL)
+    assert rec.fetch_tag_pools(["RPG"]) == ({"RPG": OLD_POOL}, {})
+    assert requested == []
+
+
+def test_fetch_tag_pools_replaces_a_stale_entry_once_steamspy_answers(
+    steamspy_tags: tuple[dict[str, dict[str, GameSummary] | None], list[str]],
+) -> None:
+    served, _ = steamspy_tags
+    new_pool = {"2": game(2, name="New")}
+    served["Open World"] = new_pool
+    cache_pool("Open World", OLD, OLD_POOL)
+    assert rec.fetch_tag_pools(["Open World"]) == ({"Open World": new_pool}, {})
+    assert read_json(rec.TAG_POOLS_PATH)["Open World"] == {"fetched_at": date.today().isoformat(), "games": new_pool}

@@ -241,6 +241,8 @@ def recommend_games(
         result["requirement_relaxed"] = "too few games had every boost tag, so picks need only one of them"
     if ranked["requirement_unenforced"]:
         result["boost_tags_not_enforced"] = ranked["requirement_unenforced"]
+    if ranked["stale_pools"]:
+        result["stale_pools"] = ranked["stale_pools"]
     if not_found:
         result["like_games_not_found"] = not_found
     if unknown_boost or unknown_avoid:
