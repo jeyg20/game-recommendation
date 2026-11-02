@@ -255,14 +255,16 @@ def tag_vector(tags: dict[str, int], df_table: DfTable) -> TagVector:
 
 
 def build_profile(games: list[tuple[float, dict[str, int]]], df_table: DfTable) -> TagVector:
-    """Sum of weight * tag_vector over (weight, tags) pairs. The whole dict is the vector: never truncate it."""
+    """Sum of weight * tag_vector over (weight, tags) pairs. The whole dict is the vector: never truncate it.
+
+    A negative weight (an abandoned game) counts against its tags. Tags left at zero or below are dropped, so the
+    profile stays non-negative: cosine would otherwise reward candidates for lacking them.
+    """
     profile: defaultdict[str, float] = defaultdict(float)
     for weight, tags in games:
-        if weight <= 0:
-            continue
         for tag, value in tag_vector(tags, df_table).items():
             profile[tag] += weight * value
-    return dict(profile)
+    return {tag: value for tag, value in profile.items() if value > 0}
 
 
 REFERENCE_WEIGHT = 1.0  # all "more like X" games together, relative to the whole (unit-length) library profile

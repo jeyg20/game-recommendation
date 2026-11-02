@@ -71,6 +71,13 @@ def test_build_profile_sums_weighted_vectors_and_skips_zero_weights(df_table: Df
     assert "Horror" not in profile
 
 
+def test_build_profile_negative_weight_counts_against_tags_and_drops_nonpositive(df_table: DfTable) -> None:
+    profile = build_profile([(1.0, {"RPG": 1, "Indie": 1}), (-0.3, {"RPG": 1}), (-0.3, {"Horror": 1})], df_table)
+    rpg, indie = df_table["idf"]["RPG"], df_table["idf"]["Indie"]
+    assert profile == pytest.approx({"RPG": 0.5 * rpg - 0.3 * rpg, "Indie": 0.5 * indie})
+    assert "Horror" not in profile  # only an abandoned game had it: below zero, dropped
+
+
 def test_adjust_profile_without_steers_is_the_unit_profile() -> None:
     adjusted = adjust_profile({"RPG": 3.0, "Indie": 4.0}, [], [], [])
     assert adjusted == pytest.approx({"RPG": 0.6, "Indie": 0.8})

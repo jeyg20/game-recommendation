@@ -43,7 +43,13 @@ def main() -> int:
 
     with status.running("evaluating the ranking"):
         player_games, games, df_table, _ = tools.ensure_loaded()
-        result = evaluate({game["appid"] for game in player_games}, games, df_table, label=args.label)
+        result = evaluate(
+            {game["appid"] for game in player_games},
+            games,
+            df_table,
+            label=args.label,
+            last_played=tools.last_played_by_appid(player_games),
+        )
         path = save(result)
 
     print(summary_line(result))

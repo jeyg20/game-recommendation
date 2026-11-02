@@ -5,7 +5,8 @@ reads: keep them accurate. Library, df table and profile are loaded once and reu
 """
 
 import difflib
-from collections.abc import Iterable
+import time
+from collections.abc import Iterable, Mapping
 from typing import TypedDict, cast
 
 from src import library, steam_api, steamspy
@@ -90,16 +91,38 @@ def ensure_loaded() -> tuple[list[OwnedGame], dict[int, LibraryGame], DfTable, T
     if state["df_table"] is None:
         state["df_table"] = load_df_table()
     if state["profile"] is None:
-        state["profile"] = library_profile(state["games"].values(), state["df_table"])
+        state["profile"] = library_profile(
+            state["games"].values(), state["df_table"], last_played_by_appid(state["player_games"])
+        )
         if not state["profile"]:
             raise RuntimeError("Empty taste profile: no owned game has both playtime and tags")
     return state["player_games"], state["games"], state["df_table"], state["profile"]
 
 
-def library_profile(games: Iterable[LibraryGame], df_table: DfTable) -> TagVector:
-    """The taste profile of these owned games. Shared with the offline evaluation, which leaves one game out."""
+def last_played_by_appid(player_games: Iterable[OwnedGame]) -> dict[int, int]:
+    """appid -> Steam's rtime_last_played (unix seconds, 0 = never). LibraryGame doesn't carry it."""
+    return {game["appid"]: game["rtime_last_played"] for game in player_games}
+
+
+def library_profile(
+    games: Iterable[LibraryGame],
+    df_table: DfTable,
+    last_played: Mapping[int, int] | None = None,
+    now: float | None = None,
+) -> TagVector:
+    """The taste profile of these owned games. Shared with the offline evaluation, which leaves one game out.
+
+    Abandoned games (see is_abandoned) weigh -ABANDON_WEIGHT; without `last_played` none count as abandoned.
+    """
+    last_played = last_played or {}
+    now = time.time() if now is None else now
     weighted = [
-        (taste_weight(g["playtime_hours"], g["main_story_hours"], g["tags"] or {}), g["tags"] or {})
+        (
+            -ABANDON_WEIGHT
+            if is_abandoned(g, last_played.get(g["appid"], 0), now)
+            else taste_weight(g["playtime_hours"], g["main_story_hours"], g["tags"] or {}),
+            g["tags"] or {},
+        )
         for g in games
         if g["tags"]
     ]
@@ -154,6 +177,29 @@ def is_backlog(game: LibraryGame) -> bool:
     return not story or hours < BACKLOG_MAX_STORY_SHARE * story
 
 
+ABANDON_MIN_DAYS = 120  # barely started and untouched for this long: the player tried it and left
+ABANDON_WEIGHT = 0.3  # an abandoned game's weight against its tags, against up to 1.0 for a game played through
+SECONDS_PER_DAY = 86_400
+
+
+def is_abandoned(game: LibraryGame, last_played: int, now: float) -> bool:
+    """Launched, barely started (is_backlog) and not played for over ABANDON_MIN_DAYS. A signal against its tags.
+
+    `last_played` is Steam's rtime_last_played in unix seconds; 0 (no date) is no evidence, so never abandoned.
+    Never-launched games say nothing either way.
+    """
+    if game["playtime_hours"] == 0 or not last_played or not is_backlog(game):
+        return False
+    return (now - last_played) / SECONDS_PER_DAY > ABANDON_MIN_DAYS
+
+
+def backlog_games(games: dict[int, LibraryGame], player_games: Iterable[OwnedGame]) -> list[LibraryGame]:
+    """Owned games still worth suggesting: never launched or barely started, minus the ones already abandoned."""
+    last_played = last_played_by_appid(player_games)
+    now = time.time()
+    return [g for g in games.values() if is_backlog(g) and not is_abandoned(g, last_played.get(g["appid"], 0), now)]
+
+
 def compact(recommendations: list[Recommendation], limit: int) -> list[dict[str, object]]:
     return [
         {
@@ -178,12 +224,12 @@ def get_taste_profile(top_n: int = 15) -> dict[str, object]:
     Args:
       top_n: How many of the strongest profile tags to return.
     """
-    _, games, _, profile = ensure_loaded()
+    player_games, games, _, profile = ensure_loaded()
     played = sorted(games.values(), key=lambda g: g["playtime_hours"], reverse=True)
     return {
         "top_tags": rounded(profile, top_tags(profile, top_n)),
         "most_played": [{"name": g["name"], "hours": round(g["playtime_hours"], 1)} for g in played[:10]],
-        "backlog_games": sum(1 for g in games.values() if is_backlog(g)),
+        "backlog_games": len(backlog_games(games, player_games)),
         "library_size": len(games),
         "saved_preferences": load_preferences(),
     }
@@ -301,8 +347,8 @@ def recommend_games(
         enforced = [tag for tag in required if tag not in ranked["requirement_unenforced"]]
         backlog = [
             (g["appid"], g["name"], g["tags"] or {})
-            for g in games.values()
-            if g["tags"] and is_backlog(g) and fits_tags(g["tags"], enforced, avoid, ranked["requirement_relaxed"])
+            for g in backlog_games(games, player_games)
+            if g["tags"] and fits_tags(g["tags"], enforced, avoid, ranked["requirement_relaxed"])
         ]
         backlog_picks = score_backlog(backlog, taste, df_table)[:limit]
         result["backlog"] = [

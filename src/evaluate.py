@@ -5,6 +5,7 @@ weight: the profile is rebuilt without the held-out game, the game is un-owned, 
 Diversity is measured separately on the full profile's top picks.
 """
 
+from collections.abc import Mapping
 from datetime import datetime
 from itertools import combinations
 from pathlib import Path
@@ -98,9 +99,18 @@ def summarize(ranks: list[int | None], diversity: float | None) -> Summary:
     }
 
 
-def evaluate(owned_appids: set[int], games: dict[int, LibraryGame], df_table: DfTable, label: str = "") -> EvalResult:
-    """Run the leave-one-out over `games` (the enriched library); `owned_appids` is every owned appid, as excluded."""
-    profile = library_profile(games.values(), df_table)
+def evaluate(
+    owned_appids: set[int],
+    games: dict[int, LibraryGame],
+    df_table: DfTable,
+    label: str = "",
+    last_played: Mapping[int, int] | None = None,
+) -> EvalResult:
+    """Run the leave-one-out over `games` (the enriched library); `owned_appids` is every owned appid, as excluded.
+
+    `last_played` (appid -> rtime_last_played) lets the profile count abandoned games against their tags, as live.
+    """
+    profile = library_profile(games.values(), df_table, last_played)
     pools, _ = rec.fetch_tag_pools(top_tags(profile, POOL_TAGS))
     listings = {int(game["appid"]): game for pool in pools.values() for game in pool.values()}
     held_out = pick_held_out(games, listings, HOLDOUT_GAMES)
@@ -109,7 +119,7 @@ def evaluate(owned_appids: set[int], games: dict[int, LibraryGame], df_table: Df
     for n, game in enumerate(held_out, start=1):
         status.update(f"ranking without {game['name']}", n, len(held_out))
         rest = [other for other in games.values() if other["appid"] != game["appid"]]
-        without = library_profile(rest, df_table)
+        without = library_profile(rest, df_table, last_played)
         ranked = rec.recommend(without, top_tags(without, POOL_TAGS), owned_appids - {game["appid"]}, df_table)
         results.append(
             {

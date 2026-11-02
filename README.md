@@ -99,13 +99,17 @@ when there is one (so a finished 90-minute game doesn't count).
    generic tags (Action, Singleplayer) weigh less than distinctive ones.
 3. **Taste weight** per owned game — mean of `completion = min(playtime / main_story, 1)` and
    `volume = 1 - exp(-playtime / 40)`; volume only when there's no main story or the game is multiplayer/idle.
-4. **Profile vector** — sum of `weight * vote_share * idf` over all owned games' tags. The whole dict is the vector.
+   An *abandoned* game (launched, barely started, last played over 120 days ago) weighs -0.3 instead: it counts
+   against its tags. Never-launched games weigh 0.
+4. **Profile vector** — sum of `weight * vote_share * idf` over all owned games' tags, tags at or below zero
+   dropped. The whole dict is the vector.
 5. **Candidates** — one SteamSpy `tag` request per top-N profile tag (cached for a day in `data/candidates/`),
    union, minus every owned appid.
 6. **Narrow** — shovelware floor (≥500 reviews, ≥75% positive), rank by number of tag pools hit, keep 100.
 7. **Score** — finalists' full tag vectors (reused from the corpus, missing ones fetched and appended to it), cosine
    against the profile with the same idf table.
-8. **Backlog** — unplayed or barely started owned games scored the same way, as a separate section.
+8. **Backlog** — unplayed or barely started owned games (minus abandoned ones) scored the same way, as a separate
+   section.
 9. **Explain** — the assistant explains each pick from its matched tags (see above).
 
 `--report` prints the ranking and saves it to `data/output/recommendations.json`.
@@ -147,7 +151,6 @@ Feature work is split into tasks for separate agents: rules in `AGENTS.md`, the 
 
 ## Open ideas
 
-- Negative weight for early abandonment instead of a zero floor.
 - Diversity: the top results can all come from one dominant sub-genre; an MMR-style re-rank would spread them out.
 - Reclassify the cached corpus: re-run `is_excluded` over it after the exclusion rules change.
 
