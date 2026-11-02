@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 from typing import cast
 
@@ -47,7 +48,7 @@ def pools(monkeypatch: pytest.MonkeyPatch, df_table: DfTable) -> list[str]:
 
     asked: list[str] = []
 
-    async def get_game_hltb(name: str) -> SimpleNamespace | None:
+    async def get_game_hltb(name: str, *, raise_on_failure: bool = False) -> SimpleNamespace | None:
         asked.append(name)
         hours = GAMES[int(name.removeprefix("Game "))][1]
         return SimpleNamespace(main_story=hours) if hours is not None else None
@@ -168,3 +169,63 @@ def test_table_shows_the_length_column_only_when_checked() -> None:
     assert "Story" not in table("T", [pick], "Liked", "positive_ratio")
     shown = table("T", [pick | {"main_story_hours": 8.0}, pick | {"length_unknown": True}], "Liked", "positive_ratio")
     assert "Story" in shown and "8.0h" in shown
+
+
+def candidate(appid: int) -> rec.Recommendation:
+    return {
+        "appid": appid,
+        "name": f"Game {appid}",
+        "score": 0.5,
+        "positive_ratio": 0.9,
+        "matched_tags": [],
+        "price_usd": 1.0,
+        "discount_percent": 0,
+    }
+
+
+def test_a_failed_hltb_search_is_retried_and_a_miss_is_cached(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A network hiccup must not hide a game's length for HLTB_MAX_AGE_DAYS; a real no-match should."""
+    asked: list[str] = []
+    down = {"Game 1"}
+
+    async def get_game_hltb(name: str, *, raise_on_failure: bool = False) -> SimpleNamespace | None:
+        asked.append(name)
+        assert raise_on_failure
+        if name in down:
+            raise hltb.HltbSearchFailed(name)
+        return SimpleNamespace(main_story=8.0) if name == "Game 2" else None  # Game 3: no match
+
+    monkeypatch.setattr(hltb, "get_game_hltb", get_game_hltb)
+    first = constraints.candidate_hours([candidate(1), candidate(2), candidate(3)])
+    assert first == {1: None, 2: 8.0, 3: None}
+    assert set(cast(dict[str, object], storage.read_json(config.CANDIDATE_HLTB_PATH))) == {"2", "3"}
+
+    down.clear()
+    asked.clear()
+    constraints.candidate_hours([candidate(1), candidate(2), candidate(3)])
+    assert asked == ["Game 1"]  # only the failure is looked up again
+
+
+class FakeHltb:
+    """howlongtobeatpy's answers: a list of matches ([] = no match), None for a failed request, or an error."""
+
+    answer: object = None
+
+    async def async_search(self, name: str, similarity_case_sensitive: bool) -> object:
+        if isinstance(FakeHltb.answer, Exception):
+            raise FakeHltb.answer
+        return FakeHltb.answer
+
+
+@pytest.mark.parametrize("answer", [None, OSError("connection reset")])
+def test_get_game_hltb_tells_a_failure_from_a_miss(answer: object, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(hltb, "HowLongToBeat", FakeHltb)
+    FakeHltb.answer = answer
+    assert asyncio.run(hltb.get_game_hltb("X")) is None  # the library build keeps treating it as a miss
+    with pytest.raises(hltb.HltbSearchFailed):
+        asyncio.run(hltb.get_game_hltb("X", raise_on_failure=True))
+
+    FakeHltb.answer = []
+    assert asyncio.run(hltb.get_game_hltb("X", raise_on_failure=True)) is None
+    FakeHltb.answer = [SimpleNamespace(similarity=0.4, main_story=3.0), SimpleNamespace(similarity=0.9, main_story=9.0)]
+    assert getattr(asyncio.run(hltb.get_game_hltb("X", raise_on_failure=True)), "main_story", None) == 9.0

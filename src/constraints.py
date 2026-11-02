@@ -31,8 +31,9 @@ def known_hours(value: object) -> float | None:
 
 
 async def hltb_main_story(name: str) -> float | None:
-    """Main story hours of the best HLTB name match (None when there's no match or the search failed)."""
-    return known_hours(getattr(await hltb.get_game_hltb(name), "main_story", None))
+    """Main story hours of the best HLTB name match (None when there's no match). Raises hltb.HltbSearchFailed when
+    the search failed, so it isn't cached as a miss."""
+    return known_hours(getattr(await hltb.get_game_hltb(name, raise_on_failure=True), "main_story", None))
 
 
 def within_price[R: Recommendation](picks: Sequence[R], max_price_usd: float | None) -> list[R]:
@@ -44,7 +45,8 @@ def within_price[R: Recommendation](picks: Sequence[R], max_price_usd: float | N
 
 
 def candidate_hours(picks: Sequence[Recommendation]) -> Hours:
-    """HLTB main story hours for `picks`, from the cache or looked up (one at a time, like the library) and cached."""
+    """HLTB main story hours for `picks`, from the cache or looked up (one at a time, like the library) and cached.
+    A failed lookup counts as unknown this time and isn't cached."""
     raw = storage.read_json(config.CANDIDATE_HLTB_PATH) if config.CANDIDATE_HLTB_PATH.is_file() else {}
     cache = cast(dict[str, HltbCacheEntry], raw)
     now = time.time()
@@ -57,12 +59,16 @@ def candidate_hours(picks: Sequence[Recommendation]) -> Hours:
     async def fetch() -> None:
         for n, pick in enumerate(stale, start=1):
             status.update(f"fetching HowLongToBeat: {pick['name']}", n, len(stale))
-            cache[str(pick["appid"])] = {"hours": await hltb_main_story(pick["name"]), "fetched_at": now}
+            try:
+                hours = await hltb_main_story(pick["name"])
+            except hltb.HltbSearchFailed:
+                continue  # not cached (an old entry stays stale): the next call retries it
+            cache[str(pick["appid"])] = {"hours": hours, "fetched_at": now}
 
     if stale:
         asyncio.run(fetch())
         storage.write_json(config.CANDIDATE_HLTB_PATH, cache)
-    return {p["appid"]: cache[str(p["appid"])]["hours"] for p in picks}
+    return {p["appid"]: entry["hours"] if (entry := cache.get(str(p["appid"]))) else None for p in picks}
 
 
 def within_length[R: Recommendation](

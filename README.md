@@ -100,8 +100,9 @@ request per friend at 1 per second; friends' names and libraries are cached for 
 Limits: `max_price_usd` keeps picks whose `price_usd` (what you'd pay now, after any discount) is at most that;
 picks with no known price are dropped. `max_hours` is a HowLongToBeat main-story limit. Candidates have no HLTB time
 until then, so after ranking and the price filter only the best `3 * limit` picks are looked up, one at a time, and
-cached by appid in `data/candidates/hltb_candidates.json` for 30 days (misses too). Picks known to fit come first,
-with `main_story_hours`; picks HLTB has no time for follow, flagged `length_unknown`; longer ones and the unchecked
+cached by appid in `data/candidates/hltb_candidates.json` for 30 days (misses too; a failed search isn't cached, so
+the next call retries it). Picks known to fit come first, with `main_story_hours`; picks HLTB has no time for follow,
+flagged `length_unknown`; longer ones and the unchecked
 tail are dropped, so there can be fewer than `limit`. Both apply to wildcards (looked up the same way) and
 `max_hours` to the backlog (from the library's HLTB times); price doesn't, the backlog is owned. Limits noted with
 `note_request` apply for the session unless a call passes its own; `remove=["max_hours"]` drops one. With no limits
@@ -144,7 +145,9 @@ when there is one (so a finished 90-minute game doesn't count).
    section.
 9. **Explain** — the assistant explains each pick from its matched tags (see above).
 
-`--report` prints the ranking and saves it to `data/output/recommendations.json`.
+`--report` prints the ranking and saves it to `data/output/recommendations.json`. `--export PATH` writes the same
+tables (recommendations, backlog, wildcards) as Markdown or HTML, with the terminal's Price, Story and Wishlist
+columns.
 
 `--digest [PATH]` runs the same ranking and writes a short Markdown file (default
 `data/output/digest-<date>.md`): recommendations and wildcards not in the previous digest first, the names of the

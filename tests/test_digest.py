@@ -48,6 +48,15 @@ def test_nothing_new_says_so() -> None:
     assert "New for you" not in text and "New wildcards" not in text
 
 
+def test_digest_uses_the_export_columns() -> None:
+    res = result([], [3])
+    res["recommendations"] = [pick(1, "Game 1", price_usd=7.49, discount_percent=75, on_wishlist=True)]
+    text = digest.to_markdown(res, None, DAY)
+    assert "| # | Game | Fit | Liked | Price | Wishlist | Matched tags |" in text
+    assert "| -75% $7.49 | ★ |" in text
+    assert "| # | Game | Fit | Liked | Via tag | Matched tags |" in text
+
+
 def test_backlog_is_capped_and_not_diffed() -> None:
     res = result([1], backlog=8)
     previous = digest.state(res, date(2026, 10, 26))
