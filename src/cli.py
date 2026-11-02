@@ -2,6 +2,7 @@
 
 gamer-guide              interactive assistant (needs GEMINI_API); each run is a new session
 gamer-guide --report     one-shot ranked report from the saved preferences, no LLM
+gamer-guide --export F   write that report to F (.md or .html) with store links
 gamer-guide --sessions   list logged sessions and exit
 gamer-guide --open N     print session N in full and exit
 """
@@ -9,13 +10,14 @@ gamer-guide --open N     print session N in full and exit
 import argparse
 import sys
 from collections.abc import Callable, Iterable
+from pathlib import Path
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import CompleteEvent, Completer, Completion
 from prompt_toolkit.document import Document
 from prompt_toolkit.key_binding import KeyBindings, KeyPressEvent
 
-from src import config, storage, tools, ui
+from src import config, export, storage, tools, ui
 from src.ai_agent import TOOL_LABELS, Assistant
 from src.history import ToolCall, Turn, list_sessions, load_session
 from src.tag_profile import load_df_table
@@ -235,25 +237,44 @@ def chat() -> None:
                 print(style(f"\nNew session {assistant.session}", "cyan"))
 
 
+def ranking() -> dict[str, object]:
+    """The report's ranking: saved preferences applied, no assistant."""
+    with ui.status.running("ranking games"):
+        return tools.recommend_games(limit=15)
+
+
 def report() -> None:
     """The ranking without the assistant: saved preferences applied, results printed and saved."""
-    with ui.status.running("ranking games"):
-        result = tools.recommend_games(limit=15)
+    result = ranking()
     print(ui.recommendation_tables(result))
     storage.write_json(config.RECOMMENDATIONS_PATH, result)
     print(style(f"\nFull results saved to {config.RECOMMENDATIONS_PATH}", "grey"))
+
+
+def export_report(path: Path) -> None:
+    """The report's ranking written to `path`, as Markdown or HTML by its extension."""
+    render = export.FORMATS.get(path.suffix.lower())
+    if render is None:  # checked before ranking, so a typo costs nothing and writes nothing
+        sys.exit(f"Can't export to {path.name}: use a .md or .html file name")
+    text = render(ranking())
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    print(style(f"Exported to {path}", "grey"))
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--report", action="store_true", help="print a ranked report without the assistant")
+    mode.add_argument("--export", type=Path, metavar="PATH", help="write the report to PATH (.md or .html)")
     mode.add_argument("--sessions", action="store_true", help="list logged sessions")
     mode.add_argument("--open", type=int, metavar="N", help="print logged session N in full")
     args = parser.parse_args()
 
     if args.report:
         report()
+    elif args.export is not None:
+        export_report(args.export)
     elif args.sessions:
         print_sessions()
     elif args.open is not None:

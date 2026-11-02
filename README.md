@@ -11,6 +11,7 @@ python -m src.tag_profile   # once: build the Steam-wide tag corpus (asks before
 
 uv run gamer-guide              # chat with the assistant
 uv run gamer-guide --report     # one-shot ranked report (saved preferences applied), no LLM
+uv run gamer-guide --export picks.md   # the same report as a shareable .md or .html file, with store links
 uv run gamer-guide --sessions   # list logged chat sessions
 uv run gamer-guide --open 3     # print session 3 in full
 ```
