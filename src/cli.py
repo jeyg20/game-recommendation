@@ -3,6 +3,7 @@
 gamer-guide              interactive assistant (needs GEMINI_API); each run is a new session
 gamer-guide --report     one-shot ranked report from the saved preferences, no LLM
 gamer-guide --export F   write that report to F (.md or .html) with store links
+gamer-guide --digest [F] write a Markdown digest of what's new since the last one (default data/output/)
 gamer-guide --sessions   list logged sessions and exit
 gamer-guide --open N     print session N in full and exit
 """
@@ -10,6 +11,7 @@ gamer-guide --open N     print session N in full and exit
 import argparse
 import sys
 from collections.abc import Callable, Iterable
+from datetime import date
 from pathlib import Path
 
 from prompt_toolkit import PromptSession
@@ -17,7 +19,7 @@ from prompt_toolkit.completion import CompleteEvent, Completer, Completion
 from prompt_toolkit.document import Document
 from prompt_toolkit.key_binding import KeyBindings, KeyPressEvent
 
-from src import config, export, storage, tools, ui
+from src import config, digest, export, storage, tools, ui
 from src.ai_agent import TOOL_LABELS, Assistant
 from src.history import ToolCall, Turn, list_sessions, load_session
 from src.tag_profile import load_df_table
@@ -262,11 +264,28 @@ def export_report(path: Path) -> None:
     print(style(f"Exported to {path}", "grey"))
 
 
+def digest_report(path: Path | None) -> None:
+    """The report's ranking as a digest: new picks since the last digest first, then the state is updated."""
+    day = date.today()
+    path = path or config.DIGEST_STATE_PATH.parent / f"digest-{day.isoformat()}.md"
+    if path.suffix.lower() != ".md":  # checked before ranking, like --export
+        sys.exit(f"Can't write a digest to {path.name}: use a .md file name")
+    result = ranking()
+    text = digest.to_markdown(result, digest.load_state(), day)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    digest.save_state(result, day)  # only after the digest is written, so a failed write doesn't hide new picks
+    print(style(f"Digest written to {path}", "grey"))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--report", action="store_true", help="print a ranked report without the assistant")
     mode.add_argument("--export", type=Path, metavar="PATH", help="write the report to PATH (.md or .html)")
+    mode.add_argument(
+        "--digest", nargs="?", const="", type=str, metavar="PATH", help="write a digest of new picks (.md)"
+    )
     mode.add_argument("--sessions", action="store_true", help="list logged sessions")
     mode.add_argument("--open", type=int, metavar="N", help="print logged session N in full")
     args = parser.parse_args()
@@ -275,6 +294,8 @@ def main() -> None:
         report()
     elif args.export is not None:
         export_report(args.export)
+    elif args.digest is not None:
+        digest_report(Path(args.digest) if args.digest else None)
     elif args.sessions:
         print_sessions()
     elif args.open is not None:

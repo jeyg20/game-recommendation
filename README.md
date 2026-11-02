@@ -12,6 +12,7 @@ python -m src.tag_profile   # once: build the Steam-wide tag corpus (asks before
 uv run gamer-guide              # chat with the assistant
 uv run gamer-guide --report     # one-shot ranked report (saved preferences applied), no LLM
 uv run gamer-guide --export picks.md   # the same report as a shareable .md or .html file, with store links
+uv run gamer-guide --digest     # weekly digest: new picks since the last digest, plus 5 backlog games to start
 uv run gamer-guide --sessions   # list logged chat sessions
 uv run gamer-guide --open 3     # print session 3 in full
 ```
@@ -144,6 +145,18 @@ when there is one (so a finished 90-minute game doesn't count).
 9. **Explain** — the assistant explains each pick from its matched tags (see above).
 
 `--report` prints the ranking and saves it to `data/output/recommendations.json`.
+
+`--digest [PATH]` runs the same ranking and writes a short Markdown file (default
+`data/output/digest-<date>.md`): recommendations and wildcards not in the previous digest first, the names of the
+ones still recommended, the top 5 backlog games, and the previous digest's date. The appids it listed go to
+`data/output/digest_state.json`, so the next digest only shows what's new. Scheduling is up to you, e.g. Mondays
+at 9:00 with cron:
+
+```cron
+0 9 * * 1  cd ~/dev/gamer_guide && uv run gamer-guide --digest
+```
+
+A Claude Code scheduled task can run the same command instead.
 
 ## Development
 

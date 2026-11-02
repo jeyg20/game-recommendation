@@ -37,3 +37,4 @@ EVAL_DIR = ROOT / "data/output/eval"
 PREFERENCES_PATH = ROOT / "data/preferences.json"
 FEEDBACK_PATH = ROOT / "data/feedback.json"  # liked / disliked / not-interested games (feedback.py)
 SESSIONS_DIR = ROOT / "data/logs/sessions"  # one JSONL log per chat session
+DIGEST_STATE_PATH = ROOT / "data/output/digest_state.json"  # last digest: {date, appids} (digest.py)

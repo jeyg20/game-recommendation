@@ -38,8 +38,16 @@ class Section:
 
     @property
     def more(self) -> list[str]:
-        """Fields other tasks add (price, wishlist...), in first-seen order."""
-        return list(dict.fromkeys(key for pick in self.picks for key in pick if key not in BASE_FIELDS))
+        """Fields other tasks add (price, wishlist...), in first-seen order. A field that is None on every pick (no
+        prices for owned backlog games) gets no column: it would only hold dashes."""
+        return list(
+            dict.fromkeys(
+                key
+                for pick in self.picks
+                for key, value in pick.items()
+                if key not in BASE_FIELDS and value is not None
+            )
+        )
 
     def headers(self) -> list[str]:
         return ["#", "Game", "Fit", self.extra_header, *(header(key) for key in self.more), "Matched tags"]

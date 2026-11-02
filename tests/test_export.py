@@ -130,3 +130,14 @@ def test_export_writes_by_extension(name: str, tmp_path: Path, monkeypatch: pyte
     cli.export_report(target)
     text = target.read_text(encoding="utf-8")
     assert text.startswith("# Gamer Guide picks") if name.endswith(".md") else text.startswith("<!DOCTYPE html>")
+
+
+def test_extra_field_empty_on_every_pick_gets_no_column() -> None:
+    """Owned backlog games have no price: a column of dashes says nothing."""
+    picks = [
+        {"name": "A", "appid": 1, "score": 0.5, "playtime_hours": 0.0, "matched_tags": [], "price_usd": None},
+        {"name": "B", "appid": 2, "score": 0.4, "playtime_hours": 1.0, "matched_tags": [], "price_usd": None},
+    ]
+    assert "| # | Game | Fit | Hours | Matched tags |" in export.to_markdown({"backlog": picks}, DAY)
+    picks[1]["price_usd"] = 9.99
+    assert "| # | Game | Fit | Hours | Price usd | Matched tags |" in export.to_markdown({"backlog": picks}, DAY)
