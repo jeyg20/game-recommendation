@@ -17,6 +17,7 @@ GEMINI_API: str | None = os.getenv("GEMINI_API")
 STEAM_DATA_FILE_PATH = ROOT / "data/raw/steam_api_data.json"
 STEAMSPY_DATA = ROOT / "data/raw/steamspy_data.json"
 HLTB_DATA_FILE_PATH = ROOT / "data/raw/hltb_game_data_list.json"
+WISHLIST_PATH = ROOT / "data/raw/wishlist.json"  # the player's wishlist, refetched daily (wishlist.py)
 
 # Steam-wide tag corpus (tag_profile.py)
 STEAM_BACKGROUND_CORPUS = ROOT / "data/corpus/steam_background_corpus.json"

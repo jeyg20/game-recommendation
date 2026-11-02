@@ -14,6 +14,7 @@ PLAYER_GAME_STATS = "https://api.steampowered.com/ISteamUserStats/GetUserStatsFo
 PLAYER_RECENT_GAMES = "https://api.steampowered.com/IPlayerService/GetRecentlyPlayedGames/v0001"
 GAME_DETAILS = "https://store.steampowered.com/api/appdetails"
 STORE_SEARCH = "https://store.steampowered.com/api/storesearch/"
+WISHLIST = "https://api.steampowered.com/IWishlistService/GetWishlist/v1"
 
 type Params = dict[str, str | int]
 type SteamResponse = dict[str, object] | None
@@ -62,6 +63,14 @@ class StoreApp(TypedDict):
 
     success: bool
     data: NotRequired[dict[str, object]]  # missing when success is false
+
+
+class WishlistItem(TypedDict):
+    """One `GetWishlist` entry."""
+
+    appid: int
+    priority: int  # the player's own ordering on the wishlist page; 0 for every game until they reorder it
+    date_added: int  # unix time
 
 
 def steam_request(url: str, params: Params) -> SteamResponse:
@@ -116,6 +125,20 @@ def get_player_stats(steam_id: str, steam_api_key: str, game_id: str) -> SteamRe
     status.update("Getting player stats")
     params: Params = {"appid": game_id, "key": steam_api_key, "steamid": steam_id, "format": "json"}
     return steam_request(PLAYER_GAME_STATS, params)
+
+
+def get_wishlist(steam_id: str, steam_api_key: str = "") -> list[WishlistItem] | None:
+    """The account's wishlist. None on a failed request; empty when the wishlist is empty or private (Steam answers
+    both with `{"response": {}}`). A public wishlist needs no key; the key is sent when set."""
+    status.update("Getting wishlist")
+    params: Params = {"steamid": steam_id}
+    if steam_api_key:
+        params["key"] = steam_api_key
+    data = steam_request(WISHLIST, params)
+    response = data.get("response") if data is not None else None
+    if not isinstance(response, dict):
+        return None
+    return cast(list[WishlistItem], cast(dict[str, object], response).get("items", []))
 
 
 # def merge_data(data_a: dict, data_b: dict):

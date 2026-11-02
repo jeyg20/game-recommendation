@@ -29,6 +29,7 @@ TOOL_LABELS = {  # what the status line says while a tool runs
     "get_pick_outcomes": "checking how past picks turned out",
     "rate_games": "saving your ratings",
     "get_feedback": "reading your ratings",
+    "rank_wishlist": "ranking your wishlist",
 }
 MAX_TOOL_ROUNDS = 8  # model -> tools -> model round trips per prompt, guards against a call loop
 
@@ -67,6 +68,7 @@ Other tools:
 - For "how good have your recommendations been?", call get_pick_outcomes; say it reflects the last library refresh.
 - When the player reacts to picks (liked, disliked, not interested), call rate_games.
 - For "which picks are on sale?", call recommend_games with on_sale_only; prices are US prices after any discount, up to a day old.
+- For "which wishlist game should I get first?", call rank_wishlist; on_wishlist on a pick means it's wishlisted.
 
 Be concise. Use short lists.
 """

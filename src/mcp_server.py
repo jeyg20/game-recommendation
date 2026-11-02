@@ -56,6 +56,7 @@ Other tools:
 - For "how good have your recommendations been?", call get_pick_outcomes; say it reflects the last library refresh.
 - When the player reacts to picks (liked, disliked, not interested), call rate_games.
 - For "which picks are on sale?", call recommend_games with on_sale_only; prices are US prices after any discount, up to a day old.
+- For "which wishlist game should I get first?", call rank_wishlist; on_wishlist on a pick means it's wishlisted.
 
 Be concise. Use short lists.
 """
@@ -80,6 +81,7 @@ ANNOTATIONS: dict[str, ToolAnnotations] = {  # the tools.TOOLS served; start_new
     "get_pick_outcomes": READ_ONLY,
     "rate_games": ToolAnnotations(read_only_hint=False, destructive_hint=False, open_world_hint=True),
     "get_feedback": READ_ONLY,
+    "rank_wishlist": READS_STEAM,  # writes only caches
 }
 
 # Sync tools run on worker threads, so Claude's parallel calls would race on tools.state (ensure_loaded checks

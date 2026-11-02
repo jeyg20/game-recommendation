@@ -64,6 +64,7 @@ Gemini (`src/ai_agent.py`) reads your prompt and calls the tools in `src/tools.p
 | `get_pick_outcomes` | How past picks turned out: how many you bought and played over 2 h, and backlog picks started |
 | `rate_games` | Saves liked, disliked and not-interested games (`data/feedback.json`) that steer every later request |
 | `get_feedback` | The games you rated with `rate_games` |
+| `rank_wishlist` | Your Steam wishlist ranked by fit to your profile (`data/raw/wishlist.json`, refetched daily) |
 
 Steering: the library profile is scaled to unit length and the reference games' tag vectors are added on top
 (sharing a weight of 1.0 between them). Boost tags are must-haves: their SteamSpy pools are always fetched, every
@@ -78,6 +79,10 @@ not-interested games are never recommended again.
 Prices: each pick carries `price_usd` (after any discount) and `discount_percent` from SteamSpy's tag listings, so
 they're US prices up to a day old (backlog picks have none). `recommend_games(on_sale_only=True)` keeps only
 discounted picks, which can be fewer than `limit`.
+
+Wishlist: `rank_wishlist` scores every wishlisted game against the unsteered library profile. Picks from
+`recommend_games` carry `on_wishlist`. The wishlist must be public; it's cached for a day, and when it can't be read
+`rank_wishlist` says so and `on_wishlist` is false.
 
 **When it recommends.** Only when you ask for picks ("recommend", "what should I play", "that's it") or send a
 complete request in one message. While you're still describing what you want, it notes each detail with

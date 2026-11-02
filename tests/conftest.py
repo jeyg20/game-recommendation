@@ -12,7 +12,7 @@ import requests
 # loaded up front so isolated_data finds every module that copied a config path by name
 import src.cli
 import src.mcp_server  # noqa: F401
-from src import config, tools
+from src import config, steam_api, tools
 from src.tag_profile import DfTable
 
 
@@ -30,6 +30,12 @@ def offline(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(requests.Session, "request", _blocked)
     monkeypatch.setattr(socket.socket, "connect", _blocked)
     monkeypatch.setattr(socket, "create_connection", _blocked)
+
+
+@pytest.fixture(autouse=True)
+def no_wishlist(monkeypatch: pytest.MonkeyPatch) -> None:
+    """recommend_games reads the wishlist on every call: by default it can't be read. Wishlist tests replace this."""
+    monkeypatch.setattr(steam_api, "get_wishlist", lambda steam_id, steam_api_key="": None)
 
 
 def data_paths() -> dict[str, Path]:

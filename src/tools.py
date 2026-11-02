@@ -9,7 +9,7 @@ import time
 from collections.abc import Iterable, Mapping
 from typing import TypedDict, cast
 
-from src import library, steam_api, steamspy
+from src import library, steam_api, steamspy, wishlist
 from src.explain import explain
 from src.feedback import (
     RATINGS,
@@ -27,7 +27,7 @@ from src.history import list_sessions, load_session
 from src.library import LibraryGame
 from src.outcomes import PLAYED_HOURS, pick_outcomes
 from src.preferences import Preferences, load_preferences, merge, save_preferences, without
-from src.recommend import Recommendation, fits_tags, recommend, score, score_backlog
+from src.recommend import Recommendation, enrich_tags, fits_tags, recommend, score, score_backlog
 from src.steam_api import OwnedGame
 from src.tag_profile import (
     DfTable,
@@ -200,7 +200,10 @@ def backlog_games(games: dict[int, LibraryGame], player_games: Iterable[OwnedGam
     return [g for g in games.values() if is_backlog(g) and not is_abandoned(g, last_played.get(g["appid"], 0), now)]
 
 
-def compact(recommendations: list[Recommendation], limit: int) -> list[dict[str, object]]:
+def compact(
+    recommendations: list[Recommendation], limit: int, wishlisted: set[int] | None = None
+) -> list[dict[str, object]]:
+    """The picks as the model sees them. `wishlisted` adds `on_wishlist` (left out for backlog games: they're owned)."""
     return [
         {
             "name": rec["name"],
@@ -210,6 +213,7 @@ def compact(recommendations: list[Recommendation], limit: int) -> list[dict[str,
             "matched_tags": rec["matched_tags"],
             "price_usd": rec["price_usd"],
             "discount_percent": rec["discount_percent"],
+            **({"on_wishlist": rec["appid"] in wishlisted} if wishlisted is not None else {}),
         }
         for rec in recommendations[:limit]
     ]
@@ -250,8 +254,8 @@ def recommend_games(
 
     Candidates come from SteamSpy (popular, well-reviewed games). Each result has a cosine score in [0, 1] and the
     tags it shares with the profile, which is the reason it was picked, plus its price: SteamSpy's US price in dollars
-    (after any discount) and discount_percent, up to a day old. New tag pools and game tags are fetched at
-    ~1 request/second, so a first run with new tags can take a minute or two.
+    (after any discount) and discount_percent, up to a day old. on_wishlist says the player already wishlisted it.
+    New tag pools and game tags are fetched at ~1 request/second, so a first run with new tags can take a minute or two.
 
     Args:
       like_games: Game names to steer toward ("more like Hollow Knight and Celeste"). Each is looked up on Steam.
@@ -331,7 +335,7 @@ def recommend_games(
         },
         "steered_top_tags": rounded(taste, top_tags(taste, 10)),
         "candidate_pools": ranked["pool_tags"],
-        "recommendations": compact(recommendations, limit),
+        "recommendations": compact(recommendations, limit, wishlist.wishlisted_appids()),
     }
     if ranked["requirement_relaxed"]:
         result["requirement_relaxed"] = "too few games had every boost tag, so picks need only one of them"
@@ -711,6 +715,62 @@ def get_feedback() -> dict[str, object]:
     return {"feedback": names(load_feedback())}
 
 
+def rank_wishlist(limit: int = 10) -> dict[str, object]:
+    """Rank the games on the player's Steam wishlist by fit to their taste profile, best first.
+
+    Use for "which game on my wishlist should I get first?". Scores use the plain library profile, with no steering.
+    The wishlist is cached for a day; tags of newly wishlisted games are fetched at ~1 request/second. Games SteamSpy
+    has no tags for can't be scored and are listed under not_ranked.
+    priority is the player's own order on the wishlist page (0 for all until they reorder it).
+
+    Args:
+      limit: How many wishlist games to return.
+    """
+    _, _, df_table, profile = ensure_loaded()
+    items = wishlist.load_wishlist()
+    if items is None:
+        return {"error": "Couldn't read the Steam wishlist: the request to Steam failed. Try again later."}
+    if not items:
+        return {
+            "error": "The Steam wishlist is empty or private. To rank it, set Game details to Public in the Steam "
+            "profile's privacy settings."
+        }
+    appids = [item["appid"] for item in items]
+    records = enrich_tags(appids)
+    titles = wishlist.names(appids)
+    priority = {item["appid"]: item["priority"] for item in items}
+    profile_norm = norm(profile)
+    ranked = sorted(
+        (
+            score(appid, titles.get(appid, f"app {appid}"), records[appid]["tags"], profile, profile_norm, df_table)
+            for appid in appids
+            if appid in records
+        ),
+        key=lambda rec: rec["score"],
+        reverse=True,
+    )
+    result: dict[str, object] = {
+        "wishlist_size": len(items),
+        "ranked": [
+            {
+                "name": rec["name"],
+                "appid": rec["appid"],
+                "score": round(rec["score"], 3),
+                "matched_tags": rec["matched_tags"],
+                "priority": priority[rec["appid"]],
+            }
+            for rec in ranked[:limit]
+        ],
+    }
+    untagged = [titles.get(appid, f"app {appid}") for appid in appids if appid not in records]
+    if untagged:
+        result["not_ranked"] = {
+            "games": untagged,
+            "reason": "SteamSpy has no tags for them yet (common for new or unreleased games)",
+        }
+    return result
+
+
 TOOLS = [
     get_taste_profile,
     recommend_games,
@@ -726,4 +786,5 @@ TOOLS = [
     get_pick_outcomes,
     rate_games,
     get_feedback,
+    rank_wishlist,
 ]
