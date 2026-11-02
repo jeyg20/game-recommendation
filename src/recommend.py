@@ -1,5 +1,7 @@
 """Turn a taste profile into ranked recommendations: retrieve by top tags, narrow locally, score finalists by cosine."""
 
+import math
+import statistics
 import time
 from datetime import date
 from typing import TypedDict, cast
@@ -26,6 +28,10 @@ FINALISTS = 100
 MIN_STRICT_RESULTS = 10  # fewer picks than this carry every required tag -> accept any one of them instead
 DIVERSITY_LAMBDA = 0.75  # MMR trade-off: 1.0 = pure fit order, lower = push near-duplicates of earlier picks down
 DIVERSITY_POOL = 30  # only the head is re-ranked; the tail keeps its fit order
+WILDCARD_TAG_RANKS = range(9, 21)  # 1-based profile ranks just outside the 8 main pool tags
+WILDCARD_POOLS = 3  # adjacent tags whose pools are fetched for wildcards
+WILDCARD_PICKS = 3
+WILDCARD_TOP_TAGS = 5  # a wildcard carries none of the main pool tags among this many of its strongest tags
 
 
 class TagPoolCache(TypedDict):
@@ -41,6 +47,10 @@ class Recommendation(TypedDict):
     matched_tags: list[str]  # the candidate's strongest tags that are also strong in the profile
     price_usd: float | None  # SteamSpy's US price (after any discount), up to a day old; None for backlog games
     discount_percent: int | None  # 0 when not on sale; None for backlog games
+
+
+class Wildcard(Recommendation):
+    via_tag: str  # the adjacent profile tag whose pool it came from
 
 
 # tags whose fetch came back empty in this process: SteamSpy keeps returning [] for some big tags, so asking again
@@ -307,6 +317,59 @@ def recommend(
         "requirement_unenforced": [tag for tag in required if tag not in enforced],
         "stale_pools": stale_pools,
     }
+
+
+def adjacent_tags(profile: TagVector, df_table: DfTable) -> list[str]:
+    """Profile tags ranked just below the main pool tags, minus generic ones (idf below the df table's median).
+
+    The first WILDCARD_POOLS of them. A generic tag (Singleplayer, Atmospheric) pulls the same games as the main pools.
+    """
+    ranked = sorted(profile, key=profile.__getitem__, reverse=True)
+    window = ranked[WILDCARD_TAG_RANKS.start - 1 : WILDCARD_TAG_RANKS.stop - 1]
+    median_idf = statistics.median(df_table["idf"].values()) if df_table["idf"] else 0.0
+    unseen_idf = math.log(1 + df_table["n"]) + 1
+    return [tag for tag in window if df_table["idf"].get(tag, unseen_idf) >= median_idf][:WILDCARD_POOLS]
+
+
+def wildcards(
+    profile: TagVector, pool_tags: list[str], excluded_appids: set[int], df_table: DfTable, avoid_tags: list[str]
+) -> list[Wildcard]:
+    """Picks from the adjacent tags' pools whose strongest tags avoid every main pool tag, best fit first (re-ranked for variety like the main picks).
+
+    `excluded_appids` should also hold the main picks. Same shovelware floor and avoided tags as the main picks; no
+    required tags, since a wildcard sits outside them by definition.
+    """
+    via = adjacent_tags(profile, df_table)
+    pools, _ = fetch_tag_pools(via)
+    members = {tag: {int(game["appid"]) for game in pool.values()} for tag, pool in pools.items()}
+    finalists = pick_finalists(pools, excluded_appids)
+    records = enrich_tags([int(game["appid"]) for game in finalists])
+    in_bubble = {tag.lower() for tag in pool_tags}
+    profile_norm = norm(profile)
+    picks: list[Wildcard] = []
+    for game in finalists:
+        appid = int(game["appid"])
+        record = records.get(appid)
+        if record is None or not fits_tags(record["tags"], [], avoid_tags, relaxed=False):
+            continue
+        strongest = sorted(record["tags"], key=record["tags"].__getitem__, reverse=True)[:WILDCARD_TOP_TAGS]
+        if any(tag.lower() in in_bubble for tag in strongest):
+            continue
+        rec = score(appid, game["name"], record["tags"], profile, profile_norm, df_table)
+        picks.append(
+            {
+                **rec,
+                "positive_ratio": positive_ratio(game),
+                "price_usd": price_usd(game),
+                "discount_percent": parse_int(game.get("discount")),
+                "via_tag": next(tag for tag in via if appid in members.get(tag, set())),
+            }
+        )
+    picks.sort(key=lambda rec: rec["score"], reverse=True)
+    # same variety re-rank as the main picks: one dense pool (three BioShocks from "Underwater") shouldn't fill
+    # every slot with one franchise
+    vectors = {rec["appid"]: tag_vector(records[rec["appid"]]["tags"], df_table) for rec in picks[:DIVERSITY_POOL]}
+    return cast(list[Wildcard], diversify(cast(list[Recommendation], picks), vectors))
 
 
 def score_backlog(

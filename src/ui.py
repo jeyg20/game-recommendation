@@ -212,6 +212,7 @@ def recommendation_tables(result: Mapping[str, object]) -> str:
     """The recommend_games result as tables, straight from the ranking data."""
     picks = result.get("recommendations")
     backlog = result.get("backlog")
+    wild = result.get("wildcards")
     applied = result.get("applied")
     blocks = [
         table("Recommended for you", picks, "Liked", "positive_ratio", with_price=True)
@@ -219,6 +220,9 @@ def recommendation_tables(result: Mapping[str, object]) -> str:
         else "",
         steer_summary(applied) if isinstance(applied, Mapping) else "",
         table("From your backlog", backlog, "Hours", "playtime_hours") if isinstance(backlog, list) else "",
+        table("Wildcards: outside your usual tags", wild, "Liked", "positive_ratio", with_price=True)
+        if isinstance(wild, list)
+        else "",
     ]
     return "\n".join(block for block in blocks if block)
 

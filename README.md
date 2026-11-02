@@ -51,7 +51,7 @@ Gemini (`src/ai_agent.py`) reads your prompt and calls the tools in `src/tools.p
 | Tool | What it does |
 | --- | --- |
 | `get_taste_profile` | Strongest profile tags, most-played and recently played games, saved preferences |
-| `recommend_games` | Ranks unowned games, optionally steered: `like_games` ("more like X"), `boost_tags`, `avoid_tags` |
+| `recommend_games` | Ranks unowned games, optionally steered: `like_games` ("more like X"), `boost_tags`, `avoid_tags`; plus a few `wildcards` from just outside your usual tags |
 | `note_request` | Records what you want (games, tags, notes) over several messages, without recommending yet |
 | `look_up_game` | One game's tags, whether you own it, and how well it fits your profile |
 | `update_preferences` | Saves steers that apply to every future request (`data/preferences.json`) |
@@ -83,6 +83,12 @@ discounted picks, which can be fewer than `limit`.
 Wishlist: `rank_wishlist` scores every wishlisted game against the unsteered library profile. Picks from
 `recommend_games` carry `on_wishlist`. The wishlist must be public; it's cached for a day, and when it can't be read
 `rank_wishlist` says so and `on_wishlist` is false.
+
+Wildcards: `recommend_games` also returns up to three `wildcards`, games from tags just outside your usual ones. It
+takes the profile tags ranked 9-20 (just past the 8 pool tags), skips generic ones (idf below the median), fetches the
+first three tags' pools, and keeps games that pass the same floor and avoid tags but have none of the 8 pool tags among
+their 5 strongest. They're ranked by fit and carry `via_tag`. `on_sale_only` applies to them too; there are none when
+boost tags are required. `include_wildcards=False` leaves them out.
 
 **When it recommends.** Only when you ask for picks ("recommend", "what should I play", "that's it") or send a
 complete request in one message. While you're still describing what you want, it notes each detail with

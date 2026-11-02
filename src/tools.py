@@ -6,7 +6,7 @@ reads: keep them accurate. Library, df table and profile are loaded once and reu
 
 import difflib
 import time
-from collections.abc import Collection, Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from typing import TypedDict, cast
 
 from src import library, steam_api, steamspy, wishlist
@@ -27,7 +27,16 @@ from src.history import list_sessions, load_session
 from src.library import LibraryGame
 from src.outcomes import PLAYED_HOURS, pick_outcomes
 from src.preferences import Preferences, load_preferences, merge, save_preferences, without
-from src.recommend import Recommendation, enrich_tags, fits_tags, recommend, score, score_backlog
+from src.recommend import (
+    WILDCARD_PICKS,
+    Recommendation,
+    enrich_tags,
+    fits_tags,
+    recommend,
+    score,
+    score_backlog,
+    wildcards,
+)
 from src.steam_api import OwnedGame
 from src.tag_profile import (
     DfTable,
@@ -220,7 +229,7 @@ def backlog_games(games: dict[int, LibraryGame], player_games: Iterable[OwnedGam
 
 
 def compact(
-    recommendations: list[Recommendation], limit: int, wishlisted: set[int] | None = None
+    recommendations: Sequence[Recommendation], limit: int, wishlisted: set[int] | None = None
 ) -> list[dict[str, object]]:
     """The picks as the model sees them. `wishlisted` adds `on_wishlist` (left out for backlog games: they're owned)."""
     return [
@@ -271,6 +280,7 @@ def recommend_games(
     include_backlog: bool = True,
     use_saved_preferences: bool = True,
     on_sale_only: bool = False,
+    include_wildcards: bool = True,
 ) -> dict[str, object]:
     """Rank games the player doesn't own against their taste profile, optionally steered for this request.
 
@@ -290,6 +300,9 @@ def recommend_games(
       include_backlog: Also rank owned games the player never launched or only tried briefly.
       use_saved_preferences: Apply the player's saved preferences on top of this request's.
       on_sale_only: Keep only discounted picks ("which of my picks are on sale?"); may return fewer than limit.
+        Applies to wildcards too.
+      include_wildcards: Also return a few wildcards: well-fitting games from tags just outside the player's usual
+        ones, each with the via_tag it came from. Left out when boost_tags are required.
     """
     player_games, games, df_table, profile = ensure_loaded()
     saved: Preferences = (
@@ -336,6 +349,7 @@ def recommend_games(
     if on_sale_only:
         recommendations = [rec for rec in recommendations if (rec["discount_percent"] or 0) > 0]
 
+    wishlisted = wishlist.wishlisted_appids()
     result: dict[str, object] = {
         "applied": {
             "like_games": [ref["name"] for ref in references],
@@ -359,7 +373,7 @@ def recommend_games(
         },
         "steered_top_tags": rounded(taste, top_tags(taste, 10)),
         "candidate_pools": ranked["pool_tags"],
-        "recommendations": compact(recommendations, limit, wishlist.wishlisted_appids()),
+        "recommendations": compact(recommendations, limit, wishlisted),
     }
     if ranked["requirement_relaxed"]:
         result["requirement_relaxed"] = "too few games had every boost tag, so picks need only one of them"
@@ -382,6 +396,17 @@ def recommend_games(
         result["backlog"] = [
             {**pick, "playtime_hours": round(games[rec["appid"]]["playtime_hours"], 1)}
             for rec, pick in zip(backlog_picks, compact(backlog_picks, limit), strict=True)
+        ]
+    # a wildcard is outside the player's usual tags by definition, so it can't also carry a required one
+    if include_wildcards and not required:
+        main_picks = {rec["appid"] for rec in ranked["recommendations"]}
+        wild = wildcards(taste, ranked["pool_tags"], excluded | main_picks, df_table, avoid)
+        if on_sale_only:
+            wild = [rec for rec in wild if (rec["discount_percent"] or 0) > 0]
+        wild = wild[:WILDCARD_PICKS]
+        result["wildcards"] = [
+            {**pick, "via_tag": rec["via_tag"]}
+            for rec, pick in zip(wild, compact(wild, WILDCARD_PICKS, wishlisted), strict=True)
         ]
     return result
 

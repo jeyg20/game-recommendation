@@ -69,6 +69,7 @@ Other tools:
 - When the player reacts to picks (liked, disliked, not interested), call rate_games.
 - For "which picks are on sale?", call recommend_games with on_sale_only; prices are US prices after any discount, up to a day old.
 - For "which wishlist game should I get first?", call rank_wishlist; on_wishlist on a pick means it's wishlisted.
+- wildcards are picks from tags just outside the player's usual ones (via_tag); point one out when they want something new.
 
 Be concise. Use short lists.
 """
