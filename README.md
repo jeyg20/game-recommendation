@@ -99,6 +99,11 @@ when there is one (so a finished 90-minute game doesn't count).
 
 `--report` prints the ranking and saves it to `data/output/recommendations.json`.
 
+## Working with agents
+
+Feature work is split into tasks for separate agents: rules in `AGENTS.md`, the plan and status board in
+`docs/agents/COORDINATOR.md`, one spec per task in `docs/agents/tasks/`.
+
 ## Open ideas
 
 - Negative weight for early abandonment instead of a zero floor.
