@@ -5,6 +5,7 @@ reads: keep them accurate. Library, df table and profile are loaded once and reu
 """
 
 import difflib
+from collections.abc import Iterable
 from typing import TypedDict, cast
 
 from src import library, steam_api, steamspy
@@ -75,15 +76,20 @@ def ensure_loaded() -> tuple[list[OwnedGame], dict[int, LibraryGame], DfTable, T
     if state["df_table"] is None:
         state["df_table"] = load_df_table()
     if state["profile"] is None:
-        weighted = [
-            (taste_weight(g["playtime_hours"], g["main_story_hours"], g["tags"] or {}), g["tags"] or {})
-            for g in state["games"].values()
-            if g["tags"]
-        ]
-        state["profile"] = build_profile(weighted, state["df_table"])
+        state["profile"] = library_profile(state["games"].values(), state["df_table"])
         if not state["profile"]:
             raise RuntimeError("Empty taste profile: no owned game has both playtime and tags")
     return state["player_games"], state["games"], state["df_table"], state["profile"]
+
+
+def library_profile(games: Iterable[LibraryGame], df_table: DfTable) -> TagVector:
+    """The taste profile of these owned games. Shared with the offline evaluation, which leaves one game out."""
+    weighted = [
+        (taste_weight(g["playtime_hours"], g["main_story_hours"], g["tags"] or {}), g["tags"] or {})
+        for g in games
+        if g["tags"]
+    ]
+    return build_profile(weighted, df_table)
 
 
 def rounded(profile: TagVector, tags: list[str]) -> dict[str, float]:

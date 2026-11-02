@@ -118,6 +118,17 @@ session log it created:
 scripts/mcp_smoke.py get_taste_profile '{"top_n": 5}' look_up_game '{"name": "Hades"}'
 ```
 
+To check whether a ranking change helped, `scripts/evaluate.py` hides each of your 10 strongest games in turn
+(the top games by taste weight that sit in a tag pool and pass the shovelware floor). It rebuilds the profile without
+the game, un-owns it and records where `recommend` ranks it. It prints recall@10, recall@25, mean reciprocal rank,
+how many games never came back, and diversity: the mean pairwise cosine of the full profile's top 10 picks (lower
+means more varied). A per-game table follows, and the full result goes to `data/output/eval/<timestamp>.json`. Run
+it before and after a change on the same day, because tag pools are cached for a day:
+
+```sh
+scripts/evaluate.py --label "before R01"
+```
+
 ## Working with agents
 
 Feature work is split into tasks for separate agents: rules in `AGENTS.md`, the plan and status board in

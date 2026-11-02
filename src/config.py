@@ -26,6 +26,9 @@ DF_TABLE_PATH = ROOT / "data/corpus/df_table.json"
 TAG_POOLS_PATH = ROOT / "data/candidates/tag_pools.json"
 RECOMMENDATIONS_PATH = ROOT / "data/output/recommendations.json"
 
+# Offline evaluation (evaluate.py): one JSON per run
+EVAL_DIR = ROOT / "data/output/eval"
+
 # Assistant (ai_agent.py)
 PREFERENCES_PATH = ROOT / "data/preferences.json"
 SESSIONS_DIR = ROOT / "data/logs/sessions"  # one JSONL log per chat session
