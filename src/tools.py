@@ -393,6 +393,10 @@ def recommend_games(
     (after any discount) and discount_percent, up to a day old. on_wishlist says the player already wishlisted it.
     New tag pools and game tags are fetched at ~1 request/second, so a first run with new tags can take a minute or two.
 
+    Afterwards: show the picks as Markdown tables (recommendations, wildcards, backlog). If the player asks why a pick
+    was chosen, call explain_pick for that game and answer from it. If they react to a game ("not for me", "loved
+    it"), call rate_games. stale_pools can't be refreshed by any tool.
+
     Args:
       like_games: Game names to steer toward ("more like Hollow Knight and Celeste"). Each is looked up on Steam.
       boost_tags: Steam user tags the picks must have, e.g. ["Shooter"] or ["Roguelike", "Co-op"] (all of them when
@@ -733,7 +737,8 @@ def explain_pick(name: str, steered: bool = False) -> dict[str, object]:
     """Why a game fits the player's taste profile: which tags drove its score, how much each added, and which of the
     player's own games put those tags in the profile. This is the fit to their profile, not a quality judgement.
 
-    Use for why-questions about a pick ("why Hades?") instead of guessing from matched tags.
+    Call this for every why-question about a pick ("why Hades?", "why that one?"), owned or not, and answer from its
+    tag shares and because_you_played instead of reasoning from the fit scores.
 
     Args:
       name: The game's name; the best Steam store match is used. Works for owned games too.
@@ -832,7 +837,8 @@ def rate_games(
 ) -> dict[str, object]:
     """Save the player's reactions to games, kept across sessions and applied to every recommend_games call.
 
-    Use when the player reacts to picks ("loved Hades", "Dead Cells isn't for me", "not interested in Rust").
+    Use when the player reacts to picks ("loved Hades", "Dead Cells isn't for me", "not interested in Rust"), rather
+    than avoid tags or notes: a rating steers by that one game's tags and hides it for good.
     Liked games pull the ranking toward their tags, disliked ones push it away and never come back as picks,
     not-interested ones are only hidden from future picks. Rating a game again moves it to the new list.
 
