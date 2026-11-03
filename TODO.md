@@ -5,7 +5,8 @@ Decisions: session set in `main()` before `run()`, and `start_new_session` (serv
 each conversation, since the process can outlive one; each tool call logged as a turn
 (`[mcp] <tool>`); all calls serialized by one lock; picks shown as Markdown tables per the instructions; the SDK's
 stdio transport already diverts fd 1 to stderr, so no `ui.py` change was needed (proved with a tool that prints).
-Left: approve the server in `claude` and run a real chat; progress reporting (option B).
+Left: progress reporting for the slow tools (option B). Update 2026-11-02: the owner ran real chats in Claude Desktop
+(it works); the server now serves 16 tools (see the README tool table).
 
 Goal: expose Gamer Guide's tools over MCP so Claude Code / Claude Desktop (subscription) does the reasoning
 instead of the paid Gemini API. The CLI keeps working as-is; the server is a second frontend.
@@ -27,7 +28,7 @@ SDK facts (checked against `mcp` 2.3.0):
 - [x] `src/mcp_server.py`: an `MCPServer` with a name, and a `main()` that runs it
 - [x] Register one tool (`get_taste_profile`)
 - [x] Register in Claude Code: the repo's `.mcp.json` (`uv run --project . gamer-guide-mcp`)
-- [ ] `/mcp` in Claude Code shows it connected; Claude can call the tool and see my real profile
+- [x] `/mcp` in Claude Code shows it connected; Claude can call the tool and see my real profile
 - [ ] Try the MCP Inspector (`uv run mcp dev src/mcp_server.py`) to call tools without spending usage
 
 ## 2. Register the tools
@@ -69,5 +70,5 @@ SDK facts (checked against `mcp` 2.3.0):
 - [x] `tools.state` is shared and `ensure_loaded` does check-then-set: what happens on a cold cache with two calls?
 
 ## Done when
-- [ ] A full chat in Claude Code: describe what I want over a few messages, get picks, look up a game,
+- [x] A full chat (done in Claude Desktop): describe what I want over a few messages, get picks, look up a game,
       read history, all without the Gemini key

@@ -206,7 +206,11 @@ Feature work is split into tasks for separate agents: rules in `AGENTS.md`, the 
 
 ## Open ideas
 
-- Diversity: the top results can all come from one dominant sub-genre; an MMR-style re-rank would spread them out.
+- A signal beyond tags. The fit score is a cosine over tag vectors, so favourites that share few tags with the rest of
+  the library (Baldur's Gate 3, Beat Saber) can't be found again whatever the shortlist does (R06 tried ranking the
+  shortlist by fit and lost recall; see `docs/agents/COORDINATOR.md`). "Players who own X also own Y" data would be the
+  next real step.
+- A bigger evaluation: 10 held-out games per set make recall move in steps of 0.10, so small changes read as noise.
 - Reclassify the cached corpus: re-run `is_excluded` over it after the exclusion rules change.
 
 ## Notes on SteamSpy usage

@@ -1,7 +1,7 @@
 [project]
 name = "gamer-guide"
 version = "0.1.0"
-description = "Add your description here"
+description = "Steam game recommendations from your own playtime, as a Gemini CLI and an MCP server"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
