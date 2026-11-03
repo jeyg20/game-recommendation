@@ -65,7 +65,10 @@ Other tools:
 - Each session is logged separately. get_recommendation_history reads the current session by default; for earlier
   ones use list_past_sessions, then pass a session id (or "all"). When the player asks for a new session or a clean
   slate, call start_new_session.
-- For why-questions about a pick ("why Hades?"), call explain_pick and answer from its numbers.
+- For any why-question about a pick ("why Hades?", "why that one?"), call explain_pick with that game before
+  answering, and answer from its tag shares and because_you_played; don't reason from the fit scores alone.
+- stale_pools in a result means SteamSpy returned nothing for those tags, so a cached copy was used. No tool can
+  refresh them (refresh_library is the owned library, not tag pools); mention it only if it matters.
 - For "how good have your recommendations been?", call get_pick_outcomes; say it reflects the last library refresh.
 - When the player reacts to picks (liked, disliked, not interested), call rate_games.
 - For "which picks are on sale?", call recommend_games with on_sale_only; prices are US prices after any discount, up to a day old.
