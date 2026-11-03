@@ -119,6 +119,7 @@ def ensure_loaded() -> tuple[list[OwnedGame], dict[int, LibraryGame], DfTable, T
             last_played_by_appid(state["player_games"]),
             recent_appids=played_recently(state["player_games"]),
             achievement_share=library.load_achievement_shares(state["player_games"]),
+            extra_hours=state["xbox"]["steam_hours"] if state["xbox"] else None,
         )
         state["profile"] = weighted_profile(
             state["games"].values(), state["weights"], state["df_table"], xbox_entries(state["xbox"])
@@ -144,6 +145,7 @@ def library_weights(
     now: float | None = None,
     recent_appids: Collection[int] = (),
     achievement_share: Mapping[int, float] | None = None,
+    extra_hours: Mapping[int, float] | None = None,
 ) -> dict[int, float]:
     """appid -> the weight each tagged owned game gets in the library profile (games without tags add nothing).
 
@@ -151,12 +153,17 @@ def library_weights(
     Other games' weights fade with time since last played (recency_factor), except games in `recent_appids`
     (played in the last two weeks). `achievement_share` (appid -> unlocked share) feeds taste_weight's completion.
     The abandoned penalty doesn't fade: an old abandonment is no weaker evidence against its tags.
+    `extra_hours` (appid -> hours played on Xbox) joins a game's Steam playtime: the same game played on both.
     """
     last_played = last_played or {}
     achievement_share = achievement_share or {}
+    extra_hours = extra_hours or {}
     now = time.time() if now is None else now
 
     def weight(game: LibraryGame) -> float:
+        if game["appid"] in extra_hours:
+            game = game.copy()
+            game["playtime_hours"] += extra_hours[game["appid"]]
         played = last_played.get(game["appid"], 0)
         if is_abandoned(game, played, now):
             return -ABANDON_WEIGHT
@@ -302,7 +309,8 @@ def compact(
 # Tools
 # ---------------------------------------------------------------------
 def get_taste_profile(top_n: int = 15) -> dict[str, object]:
-    """The player's taste profile built from their Steam library playtime, plus their saved preferences.
+    """The player's taste profile built from their Steam library playtime (and Xbox hours once refresh_xbox has run),
+    plus their saved preferences. xbox_most_played answers "what did I play most on Xbox?" without another call.
 
     Args:
       top_n: How many of the strongest profile tags to return.
@@ -319,7 +327,9 @@ def get_taste_profile(top_n: int = 15) -> dict[str, object]:
         ],
         "backlog_games": len(backlog_games(games, player_games)),
         "library_size": len(games),
-        "xbox_games": len(state["xbox"]["games"]) if state["xbox"] else 0,  # Xbox-only games counted in the profile
+        # Xbox-only games counted in the profile (the ones with hours), and the most played on Xbox
+        "xbox_games": sum(game["weight"] > 0 for game in state["xbox"]["games"]) if state["xbox"] else 0,
+        "xbox_most_played": state["xbox"]["played"][:XBOX_MOST_PLAYED_IN_PROFILE] if state["xbox"] else [],
         "saved_preferences": load_preferences(),
     }
 
@@ -1033,19 +1043,23 @@ def friends_games(
 
 
 XBOX_UNMATCHED_SHOWN = 20
+XBOX_MOST_PLAYED_SHOWN = 10
+XBOX_MOST_PLAYED_IN_PROFILE = 5
 
 
 def refresh_xbox() -> dict[str, object]:
-    """Read the player's Xbox games (console, Game Pass, Xbox PC app) from OpenXBL now, match new ones to Steam games
-    and rebuild the taste profile with them. Matched games count in the profile by achievement progress (Xbox gives
-    no hours) unless the Steam library has them, and are never recommended.
+    """Read the player's Xbox games (console, Game Pass, Xbox PC app) and their hours from OpenXBL now, match new ones
+    to Steam games and rebuild the taste profile with them. Matched games count in the profile by their Xbox hours, as
+    Steam games do (hours on both add up for a game in the Steam library); a game without hours counts 0. Every matched
+    game is never recommended. most_played and total_hours answer "what did I play most on Xbox?".
 
-    Call when the player says they play on Xbox or Game Pass, or after they bought something on Xbox. The first call
-    is slow (a few minutes: one Steam store lookup per Xbox game at 1 per second); later calls only look up new games.
-    Needs an OpenXBL key (XBOX_API_KEY in .env).
+    Call when the player says they play on Xbox or Game Pass, after they bought or played something on Xbox, or when
+    they ask what they played most on Xbox and get_taste_profile has no xbox_most_played. The first call is slow (a
+    few minutes: one Steam store lookup per Xbox game at 1 per second, and one hours request per played game); later
+    calls only look up new games, and hours over a week old. Needs an OpenXBL key (XBOX_API_KEY in .env).
     """
     player_games = state["player_games"] or library.load_library()[0]
-    loaded = xbox.load_xbox({game["appid"] for game in player_games}, max_age=timedelta(0))
+    loaded = xbox.load_xbox({game["appid"] for game in player_games}, max_age=timedelta(0), fetch_minutes=True)
     if loaded is None:
         return {
             "error": "Couldn't read the Xbox games: no XBOX_API_KEY in .env, or the OpenXBL request failed and "
@@ -1062,10 +1076,18 @@ def refresh_xbox() -> dict[str, object]:
         "unmatched": loaded["unmatched"][:XBOX_UNMATCHED_SHOWN],
         "unmatched_count": len(loaded["unmatched"]),
         "skipped_steam_duplicates": loaded["steam_duplicates"],
+        "total_hours": loaded["total_hours"],
+        "most_played": loaded["played"][:XBOX_MOST_PLAYED_SHOWN],
+        "hours_requests": loaded["minutes_requests"],
         "top_tags": rounded(profile, top_tags(profile, 10)),
     }
     if loaded["fetch_failed"]:
         result["openxbl_failed"] = f"OpenXBL didn't answer: used the Xbox games cached at {loaded['fetched_at']}"
+    if loaded["minutes_failed"]:
+        result["hours_failed"] = (
+            "An Xbox hours request failed (OpenXBL down or over its hourly limit): the rest are read on the next "
+            "refresh_xbox."
+        )
     return result
 
 

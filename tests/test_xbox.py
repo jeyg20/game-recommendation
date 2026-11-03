@@ -1,7 +1,7 @@
-"""Xbox games: OpenXBL titles matched to Steam by name, counted in the profile by progress and never recommended."""
+"""Xbox games: OpenXBL titles matched to Steam by name, counted in the profile by hours and never recommended."""
 
 from datetime import datetime, timedelta
-from typing import cast
+from typing import Literal, cast
 
 import pytest
 import requests
@@ -11,14 +11,16 @@ from src.library import LibraryGame
 from src.openxbl import XboxTitle
 from src.steam_api import OwnedGame, StoreSearchItem
 from src.storage import read_json, write_json
-from src.tag_profile import CorpusRecord, DfTable, build_profile
+from src.tag_profile import CorpusRecord, DfTable, build_profile, taste_weight
 from tests.test_wildcards import GAMES, PROFILE, fake_pools, wide_df_table  # noqa: F401 - fixtures
 
 FAKE_KEY = "not-a-real-openxbl-key"
 
 
-def title(title_id: str, name: str, progress: float = 0.0, kind: str = "Game") -> XboxTitle:
-    return {"titleId": title_id, "name": name, "type": kind, "devices": ["Win32"], "progress": progress}
+def title(
+    title_id: str, name: str, progress: float = 0.0, kind: str = "Game", devices: tuple[str, ...] = ("Win32",)
+) -> XboxTitle:
+    return {"titleId": title_id, "name": name, "type": kind, "devices": list(devices), "progress": progress}
 
 
 TITLES = [
@@ -36,19 +38,27 @@ STORE: dict[str, list[StoreSearchItem]] = {
     ],
 }
 TAGS = {100: {"Shooter": 10}, 200: {"RPG": 10, "Co-op": 4}}
+MINUTES: dict[str, int | None] = {"1": 10 * 60, "3": None, "4": 75 * 60}  # titleId -> MinutesPlayed (None: no stat)
 
 
 class FakeServices:
-    """OpenXBL, the store search and the tag fetch, counting calls. `titles = None` makes OpenXBL fail."""
+    """OpenXBL, the store search and the tag fetch, counting calls. `titles = None` makes OpenXBL fail, a `minutes`
+    value of False makes that title's minutes request fail."""
 
     def __init__(self) -> None:
         self.titles: list[XboxTitle] | None = list(TITLES)
         self.title_calls = 0
         self.searches: list[str] = []
+        self.minutes: dict[str, int | None | Literal[False]] = dict(MINUTES)
+        self.minutes_asked: list[str] = []
 
     def get_titles(self) -> list[XboxTitle] | None:
         self.title_calls += 1
         return self.titles
+
+    def get_minutes_played(self, title_id: str) -> int | None | Literal[False]:
+        self.minutes_asked.append(title_id)
+        return self.minutes.get(title_id)
 
     def search(self, term: str) -> list[StoreSearchItem] | None:
         self.searches.append(term)
@@ -73,6 +83,7 @@ STEAM_GAME: LibraryGame = {
 def services(monkeypatch: pytest.MonkeyPatch, df_table: DfTable) -> FakeServices:
     fake = FakeServices()
     monkeypatch.setattr(openxbl, "get_titles", fake.get_titles)
+    monkeypatch.setattr(openxbl, "get_minutes_played", fake.get_minutes_played)
     monkeypatch.setattr(steam_api, "try_search_store", fake.search)
     monkeypatch.setattr(xbox, "enrich_tags", fake.enrich_tags)
     monkeypatch.setattr(xbox.time, "sleep", lambda seconds: None)
@@ -84,7 +95,9 @@ def services(monkeypatch: pytest.MonkeyPatch, df_table: DfTable) -> FakeServices
     return fake
 
 
-def test_only_the_matched_xbox_only_game_enters_the_profile(services: FakeServices, df_table: DfTable) -> None:
+def test_only_the_matched_xbox_only_game_enters_the_profile_by_its_hours(
+    services: FakeServices, df_table: DfTable
+) -> None:
     steam_only = tools.ensure_loaded()[3]
     result = tools.refresh_xbox()
 
@@ -93,13 +106,104 @@ def test_only_the_matched_xbox_only_game_enters_the_profile(services: FakeServic
     assert "Some Game Demo" not in services.searches
     assert tools.state["xbox"] is not None
     [game] = tools.state["xbox"]["games"]
-    assert game["appid"] == 200 and game["weight"] == pytest.approx(
-        xbox.XBOX_BASE_WEIGHT + xbox.XBOX_PROGRESS_WEIGHT * 0.4
-    )
+    assert game["appid"] == 200 and game["weight"] == taste_weight(75, None, TAGS[200])
     steam_weight = cast(dict[int, float], tools.state["weights"])[100]
     expected = build_profile([(steam_weight, TAGS[100]), (game["weight"], TAGS[200])], df_table)
     assert tools.state["profile"] == expected != steam_only
-    assert tools.get_taste_profile()["xbox_games"] == 1
+    profile = tools.get_taste_profile()
+    assert profile["xbox_games"] == 1
+    assert profile["xbox_most_played"] == [
+        {"name": "Xbox Only Quest", "hours": 75.0},
+        {"name": "Steam Dup", "hours": 10.0},
+    ]
+
+
+def test_xbox_hours_add_to_the_same_game_on_steam(services: FakeServices) -> None:
+    steam_alone = tools.library_weights([STEAM_GAME])[100]
+    tools.refresh_xbox()
+    both = cast(dict[int, float], tools.state["weights"])[100]
+    assert both == tools.library_weights([STEAM_GAME | {"playtime_hours": 40.0}])[100] > steam_alone
+
+
+def test_a_game_without_minutes_weighs_nothing_but_is_still_never_recommended(services: FakeServices) -> None:
+    services.minutes["4"] = None
+    tools.refresh_xbox()
+    assert tools.state["xbox"] is not None
+    [game] = tools.state["xbox"]["games"]
+    assert game["appid"] == 200 and game["weight"] == 0
+    assert 200 in tools.xbox_appids()
+    assert tools.get_taste_profile()["xbox_games"] == 0
+
+
+def test_only_played_titles_are_asked_for_minutes(services: FakeServices) -> None:
+    services.titles = [*TITLES, title("5", "Catalogue Entry"), title("6", "Console Game", devices=("XboxSeries",))]
+    tools.refresh_xbox()
+    assert sorted(services.minutes_asked) == ["1", "3", "4", "6"]  # not the 0% PC entry, not the demo
+
+
+def test_every_copy_of_a_game_is_asked_and_the_one_with_hours_counts(services: FakeServices) -> None:
+    pc_copy = title("4", "Xbox Only Quest")  # the smallest id is kept, but the hours are on the console copy
+    services.titles = [pc_copy, title("9", "XBOX ONLY QUEST™", 40, devices=("XboxSeries",))]
+    services.minutes = {"4": None, "9": 75 * 60}
+    result = tools.refresh_xbox()
+    assert sorted(services.minutes_asked) == ["4", "9"] and result["total_hours"] == 75
+    assert tools.state["xbox"] is not None
+    assert tools.state["xbox"]["games"][0]["weight"] == taste_weight(75, None, TAGS[200])
+
+
+def test_a_cached_null_is_not_asked_again_within_a_week_but_an_old_entry_is(services: FakeServices) -> None:
+    first = tools.refresh_xbox()
+    assert first["hours_requests"] == 3
+    assert cast(dict[str, dict[str, object]], read_json(config.XBOX_MINUTES_PATH))["3"]["minutes"] is None
+    services.minutes_asked.clear()
+    assert tools.refresh_xbox()["hours_requests"] == 0 and services.minutes_asked == []
+
+    cache = cast(dict[str, dict[str, object]], read_json(config.XBOX_MINUTES_PATH))
+    cache["3"]["fetched_at"] = (datetime.now() - xbox.MINUTES_MAX_AGE - timedelta(days=1)).isoformat()
+    write_json(config.XBOX_MINUTES_PATH, cache)
+    tools.refresh_xbox()
+    assert services.minutes_asked == ["3"]
+
+
+def test_a_failed_minutes_request_is_not_cached_and_stops_the_round(services: FakeServices) -> None:
+    services.titles = [title("4", "Xbox Only Quest", 40), title("1", "Steam Dup", 50)]
+    services.minutes["4"] = False
+    result = tools.refresh_xbox()
+    assert "hours_failed" in result and result["hours_requests"] == 1 and services.minutes_asked == ["4"]
+    assert not config.XBOX_MINUTES_PATH.exists()
+    services.minutes["4"] = 75 * 60
+    services.minutes_asked.clear()
+    tools.refresh_xbox()
+    assert sorted(services.minutes_asked) == ["1", "4"]
+
+
+def test_one_refresh_makes_at_most_the_capped_requests_oldest_first(
+    services: FakeServices, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(xbox, "MINUTES_MAX_REQUESTS", 2)
+    tools.refresh_xbox()
+    assert len(services.minutes_asked) == 2
+    services.minutes_asked.clear()
+    tools.refresh_xbox()
+    assert len(services.minutes_asked) == 1  # the one left; the two read are a week from due
+
+    cache = cast(dict[str, dict[str, object]], read_json(config.XBOX_MINUTES_PATH))
+    stale = datetime.now() - xbox.MINUTES_MAX_AGE - timedelta(days=1)
+    for n, title_id in enumerate(["1", "3", "4"]):
+        cache[title_id]["fetched_at"] = (stale - timedelta(days=n)).isoformat()
+    write_json(config.XBOX_MINUTES_PATH, cache)
+    services.minutes_asked.clear()
+    tools.refresh_xbox()
+    assert services.minutes_asked == ["4", "3"]
+
+
+def test_most_played_is_sorted_by_hours_and_capped(services: FakeServices) -> None:
+    services.titles = [title(str(n), f"Console Game {n}", devices=("XboxOne",)) for n in range(12)]
+    services.minutes = {str(n): (n * 7 % 12 + 1) * 60 for n in range(12)}
+    result = tools.refresh_xbox()
+    hours = [game["hours"] for game in cast(list[dict[str, float]], result["most_played"])]
+    assert len(hours) == 10 and hours == sorted(hours, reverse=True) and hours[0] == 12
+    assert result["total_hours"] == sum(range(1, 13))
 
 
 def test_a_miss_is_cached_and_not_looked_up_again(services: FakeServices) -> None:
@@ -152,8 +256,21 @@ def test_refresh_without_a_key_or_cache_is_an_error_not_an_exception(services: F
 
 def test_nothing_is_fetched_until_xbox_is_set_up(services: FakeServices) -> None:
     tools.ensure_loaded()
-    assert services.title_calls == 0 and services.searches == []
-    assert tools.get_taste_profile()["xbox_games"] == 0
+    assert services.title_calls == 0 and services.searches == [] and services.minutes_asked == []
+    profile = tools.get_taste_profile()
+    assert profile["xbox_games"] == 0 and profile["xbox_most_played"] == []
+
+
+def test_loading_the_profile_reads_minutes_from_the_cache_only(services: FakeServices) -> None:
+    tools.refresh_xbox()
+    cache = cast(dict[str, dict[str, object]], read_json(config.XBOX_MINUTES_PATH))
+    old = (datetime.now() - xbox.MINUTES_MAX_AGE - timedelta(days=1)).isoformat()
+    write_json(config.XBOX_MINUTES_PATH, {key: entry | {"fetched_at": old} for key, entry in cache.items()})
+    services.minutes_asked.clear()
+    tools.state |= {"xbox": None, "profile": None}
+    tools.ensure_loaded()
+    assert services.minutes_asked == [] and tools.state["xbox"] is not None
+    assert tools.state["xbox"]["games"][0]["weight"] == taste_weight(75, None, TAGS[200])
 
 
 def test_a_fresh_cache_is_read_without_a_request(services: FakeServices) -> None:
@@ -198,6 +315,11 @@ def test_a_game_owned_on_xbox_is_never_recommended(owned_on_xbox: None) -> None:
         "matched": 3,
         "unmatched": [],
         "steam_duplicates": 1,
+        "steam_hours": {},
+        "played": [],
+        "total_hours": 0.0,
+        "minutes_requests": 0,
+        "minutes_failed": False,
         "new_matches": 0,
         "fetch_failed": False,
         "fetched_at": "",
@@ -290,3 +412,18 @@ def test_parse_title_reads_progress_and_skips_broken_entries() -> None:
         "progress": 47,
     }
     assert openxbl.parse_title({"name": "no id"}) is None
+
+
+def test_minutes_stat_reads_minutes_played_and_skips_stats_without_a_value() -> None:
+    def body(*stats: dict[str, object]) -> dict[str, object]:
+        return {"content": {"groups": [], "statlistscollection": [{"arrangebyfield": "", "stats": list(stats)}]}}
+
+    minutes = {"name": "MinutesPlayed", "type": "Integer", "value": "8471"}
+    assert openxbl.minutes_stat(body({"name": "Wins", "value": "3"}, minutes)) == 8471
+    assert openxbl.minutes_stat(body({"name": "MinutesPlayed", "type": "Integer"})) is None
+    assert openxbl.minutes_stat({"content": {}}) is None and openxbl.minutes_stat(None) is None
+
+
+def test_a_failed_minutes_request_is_false_not_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(config, "XBOX_API_KEY", "")
+    assert openxbl.get_minutes_played("123") is False  # no key: no request (the conftest blocks HTTP)

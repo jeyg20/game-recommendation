@@ -23,6 +23,7 @@ WISHLIST_PATH = ROOT / "data/raw/wishlist.json"  # the player's wishlist, refetc
 FRIENDS_PATH = ROOT / "data/raw/friends.json"  # friends' names and owned appids, refetched daily (friends.py)
 XBOX_TITLES_PATH = ROOT / "data/raw/xbox_titles.json"  # the player's Xbox title history, refetched daily (xbox.py)
 XBOX_MATCHES_PATH = ROOT / "data/raw/xbox_matches.json"  # Xbox titleId -> Steam appid or null, 30 days (xbox.py)
+XBOX_MINUTES_PATH = ROOT / "data/raw/xbox_minutes.json"  # Xbox titleId -> minutes played or null, 7 days (xbox.py)
 
 # Steam-wide tag corpus (tag_profile.py)
 STEAM_BACKGROUND_CORPUS = ROOT / "data/corpus/steam_background_corpus.json"
