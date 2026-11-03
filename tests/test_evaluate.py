@@ -1,4 +1,5 @@
 import json
+import time
 from typing import cast
 
 import pytest
@@ -106,6 +107,7 @@ def test_ranks_and_metrics(
 
     assert [(g["appid"], g["rank"]) for g in result["games"]] == [(1, 1), (2, 20), (3, None)]
     summary = result["summary"]
+    assert summary is not None
     assert summary["held_out"] == 3
     assert summary["recall_at_10"] == pytest.approx(1 / 3)
     assert summary["recall_at_25"] == pytest.approx(2 / 3)
@@ -154,3 +156,67 @@ def test_save_writes_under_eval_dir(
     path = ev.save(result)
     assert path.parent == ev.EVAL_DIR
     assert json.loads(path.read_text())["label"] == "x"
+
+
+NOW = 1_800_000_000.0
+DAY = 86_400
+
+
+def test_recent_set_is_the_latest_played_with_real_play() -> None:
+    games = {
+        1: library_game(1, 200, {"RPG": 10}),  # played long ago
+        2: library_game(2, 10, {"RPG": 10}),  # played yesterday
+        3: library_game(3, 4, {"RPG": 10}),  # played today, but under RECENT_MIN_HOURS
+        4: library_game(4, 50, {"RPG": 10}),  # played a week ago
+        5: library_game(5, 80, {"RPG": 10}),  # also a week ago: ties break on appid
+        6: library_game(6, 90, {"RPG": 10}),  # no date
+        7: library_game(7, 90, {"RPG": 10}),  # played today, not in any pool
+    }
+    listings = {appid: listing(appid) for appid in (1, 2, 3, 4, 5, 6)}
+    last_played = {1: int(NOW - 900 * DAY), 2: int(NOW - DAY), 3: int(NOW), 4: int(NOW - 7 * DAY)}
+    last_played |= {5: last_played[4], 6: 0, 7: int(NOW)}
+
+    picked = ev.pick_recent(games, listings, last_played, 3, NOW)
+
+    assert [game["appid"] for game in picked] == [2, 4, 5]
+
+
+def test_recent_set_leaves_out_abandoned_games(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(ev, "RECENT_MIN_HOURS", 0)  # abandoned games are barely started, so the hours rule hides this
+    games = {1: library_game(1, 1, {"RPG": 10}), 2: library_game(2, 30, {"RPG": 10})}
+    last_played = {1: int(NOW - 200 * DAY), 2: int(NOW - 300 * DAY)}
+
+    picked = ev.pick_recent(games, {1: listing(1), 2: listing(2)}, last_played, 10, NOW)
+
+    assert [game["appid"] for game in picked] == [2]
+
+
+def test_both_sets_run_and_favourites_are_unchanged(
+    library: dict[int, LibraryGame], calls: list[tuple[TagVector, list[str], set[int]]], df_table: DfTable
+) -> None:
+    alone = ev.evaluate(OWNED, library, df_table, sets=("favourites",))
+    now = time.time()
+    last_played = {1: int(now - 400 * DAY), 2: int(now - 3 * DAY), 3: int(now - DAY)}
+
+    both = ev.evaluate(OWNED, library, df_table, last_played=last_played)
+
+    assert both["games"] == alone["games"] and both["summary"] == alone["summary"]
+    assert [(g["appid"], g["rank"]) for g in both["recent_games"]] == [(3, None), (2, 20), (1, 1)]
+    recent = both["recent_summary"]
+    assert recent is not None and recent["mrr"] == pytest.approx((1 + 1 / 20) / 3)
+    favourites = both["summary"]
+    assert favourites is not None and recent["diversity"] == favourites["diversity"]  # measured once
+    assert alone["recent_summary"] is None and alone["recent_games"] == []
+
+
+def test_recent_set_needs_last_played(
+    library: dict[int, LibraryGame],
+    calls: list[tuple[TagVector, list[str], set[int]]],
+    df_table: DfTable,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    result = ev.evaluate(OWNED, library, df_table, sets=("recent",))
+
+    assert result["recent_summary"] is None and result["recent_games"] == []
+    assert result["summary"] is None
+    assert "recent set is skipped" in capsys.readouterr().out

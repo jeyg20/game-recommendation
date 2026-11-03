@@ -191,6 +191,14 @@ it before and after a change on the same day, because tag pools are cached for a
 scripts/evaluate.py --label "before R01"
 ```
 
+It runs two held-out sets and prints a summary line and table for each. **favourites** is the set above: your
+all-time strongest games by plain taste weight. It's the fair test for ranking and retrieval changes, but it penalises
+ideas that fade old games (recency), because many of those favourites were last played years ago. **recent** is the
+10 findable games you played most recently, among those with at least 5 hours that you didn't abandon. It's the fair
+test for "taste changes over time" ideas, since it asks whether the profile finds what you're into now. It needs
+Steam's last-played dates and is skipped, with a message, without them. Diversity is measured once and shown on both
+lines. `--set favourites` or `--set recent` runs one set, for a quicker tuning run.
+
 ## Working with agents
 
 Feature work is split into tasks for separate agents: rules in `AGENTS.md`, the plan and status board in
