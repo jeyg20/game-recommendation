@@ -88,7 +88,7 @@ Wishlist: `rank_wishlist` scores every wishlisted game against the unsteered lib
 `rank_wishlist` says so and `on_wishlist` is false.
 
 Wildcards: `recommend_games` also returns up to three `wildcards`, games from tags just outside your usual ones. It
-takes the profile tags ranked 9-20 (just past the 8 pool tags), skips generic ones (idf below the median), fetches the
+takes the profile tags ranked 9-40 (past the 8 pool tags), skips generic ones (idf below the median), fetches the
 first three tags' pools, and keeps games that pass the same floor and avoid tags but have none of the 8 pool tags among
 their 5 strongest. They're ranked by fit, then spread for variety like the main picks, and carry `via_tag`. `on_sale_only` applies to them too; there are none when
 boost tags are required. `include_wildcards=False` leaves them out.

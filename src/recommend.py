@@ -29,7 +29,9 @@ FINALISTS = 100
 MIN_STRICT_RESULTS = 10  # fewer picks than this carry every required tag -> accept any one of them instead
 DIVERSITY_LAMBDA = 0.75  # MMR trade-off: 1.0 = pure fit order, lower = push near-duplicates of earlier picks down
 DIVERSITY_POOL = 30  # only the head is re-ranked; the tail keeps its fit order
-WILDCARD_TAG_RANKS = range(9, 21)  # 1-based profile ranks just outside the 8 main pool tags
+# 1-based profile ranks outside the 8 main pool tags, searched in order for distinctive ones. Ranks 9-20 alone left
+# too few (one, then none once Xbox games joined the profile), so the window reaches down to rank 40.
+WILDCARD_TAG_RANKS = range(9, 41)
 WILDCARD_POOLS = 3  # adjacent tags whose pools are fetched for wildcards
 WILDCARD_PICKS = 3
 WILDCARD_TOP_TAGS = 5  # a wildcard carries none of the main pool tags among this many of its strongest tags
@@ -332,9 +334,10 @@ def recommend(
 
 
 def adjacent_tags(profile: TagVector, df_table: DfTable) -> list[str]:
-    """Profile tags ranked just below the main pool tags, minus generic ones (idf below the df table's median).
+    """The first WILDCARD_POOLS profile tags below the main pool tags that aren't generic (idf below the df table's
+    median), searching ranks WILDCARD_TAG_RANKS in order.
 
-    The first WILDCARD_POOLS of them. A generic tag (Singleplayer, Atmospheric) pulls the same games as the main pools.
+    A generic tag (Singleplayer, Atmospheric) pulls the same games as the main pools.
     """
     ranked = sorted(profile, key=profile.__getitem__, reverse=True)
     window = ranked[WILDCARD_TAG_RANKS.start - 1 : WILDCARD_TAG_RANKS.stop - 1]

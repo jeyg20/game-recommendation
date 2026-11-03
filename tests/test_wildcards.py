@@ -156,3 +156,17 @@ def test_near_duplicate_wildcards_are_spread(monkeypatch: pytest.MonkeyPatch, wi
     by_fit = sorted(picks, key=lambda pick: pick["score"], reverse=True)
     assert by_fit[-1]["appid"] == 23, "the different game fits least, so pure fit order would put it last"
     assert 23 in [pick["appid"] for pick in picks[:2]]
+
+
+def test_the_window_reaches_past_rank_20_when_the_nearer_tags_are_generic(wide_df_table: DfTable) -> None:
+    """Right after the main pool tags come generic ones; the distinctive tags only start at rank 25."""
+    profile = {f"Tag {n}": 100.0 - n for n in range(30)}
+    # most tags in the table are distinctive (df 50), so the median idf is theirs and the generic ones (df 900) fall below
+    df = {tag: 900 for tag in profile} | {"Tag 24": 50, "Tag 26": 50, "Tag 28": 50, "Tag 29": 50}
+    df |= {f"Other {n}": 50 for n in range(60)}
+    table: DfTable = {
+        "n": 1000,
+        "df": df,
+        "idf": {tag: math.log((1 + 1000) / (1 + count)) + 1 for tag, count in df.items()},
+    }
+    assert adjacent_tags(profile, table) == ["Tag 24", "Tag 26", "Tag 28"]
