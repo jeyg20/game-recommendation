@@ -269,7 +269,9 @@ def taste_weight(
     return (max(candidates) + volume) / 2
 
 
-RECENCY_FLOOR = 0.5  # a game last played long ago still counts this much: old favourites fade, they don't vanish
+# 1.0 = off: on 2026-11-02 the evaluation (T02) scored better without fading on both the favourites and the
+# recent-games sets (recent MRR 0.018 vs 0.011 at 0.5). Kept as a knob; lower it to make old favourites fade.
+RECENCY_FLOOR = 1.0
 RECENCY_SCALE_DAYS = 365
 SECONDS_PER_DAY = 86_400
 

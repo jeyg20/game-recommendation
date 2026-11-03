@@ -62,7 +62,10 @@ def test_abandoned_game_weakens_its_tags_in_the_library_profile(df_table: DfTabl
     assert with_dropped["RPG"] == without["RPG"]
 
 
-def test_game_played_last_week_outweighs_the_same_playtime_five_years_ago(df_table: DfTable) -> None:
+def test_game_played_last_week_outweighs_the_same_playtime_five_years_ago(
+    df_table: DfTable, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("src.tag_profile.RECENCY_FLOOR", 0.5)  # the mechanism, with fading on
     game = tagged(1, 50.0, {"RPG": 1})
     last_week = tools.library_profile([game], df_table, {1: days_ago(7)}, NOW)
     five_years_ago = tools.library_profile([game], df_table, {1: days_ago(5 * 365)}, NOW)

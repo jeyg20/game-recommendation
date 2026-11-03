@@ -140,11 +140,13 @@ def test_recency_factor_is_one_when_played_today() -> None:
     assert recency_factor(int(NOW), NOW) == 1.0
 
 
-def test_recency_factor_after_a_year_is_halfway_to_the_floor_by_e() -> None:
+def test_recency_factor_after_a_year_is_halfway_to_the_floor_by_e(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("src.tag_profile.RECENCY_FLOOR", 0.5)  # the mechanism, with fading on
     assert recency_factor(int(NOW - 365 * DAY), NOW) == pytest.approx(0.5 + 0.5 / math.e)
 
 
-def test_recency_factor_fades_towards_the_floor_but_not_below() -> None:
+def test_recency_factor_fades_towards_the_floor_but_not_below(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("src.tag_profile.RECENCY_FLOOR", 0.5)  # the mechanism, with fading on
     assert recency_factor(int(NOW - 5 * 365 * DAY), NOW) == pytest.approx(0.5, abs=0.01)
     assert recency_factor(1, NOW) >= 0.5
 
