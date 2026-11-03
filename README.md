@@ -67,6 +67,7 @@ Gemini (`src/ai_agent.py`) reads your prompt and calls the tools in `src/tools.p
 | `get_feedback` | The games you rated with `rate_games` |
 | `rank_wishlist` | Your Steam wishlist ranked by fit to your profile (`data/raw/wishlist.json`, refetched daily) |
 | `friends_games` | Games your Steam friends own and you don't, ranked by fit, with who owns each (`data/raw/friends.json`, refetched daily) |
+| `refresh_xbox` | Reads your Xbox / Game Pass games from OpenXBL, matches them to Steam games, counts them in the profile and stops recommending them (`data/raw/xbox_titles.json`, `data/raw/xbox_matches.json`) |
 
 Steering: the library profile is scaled to unit length and the reference games' tag vectors are added on top
 (sharing a weight of 1.0 between them). Boost tags are must-haves: their SteamSpy pools are always fetched, every
@@ -96,6 +97,20 @@ Friends: `friends_games` collects the games your Steam friends own (at least `mi
 tags the 60 most-owned, and scores them against the profile (`boost_tags` must-haves and `avoid_tags` work as in
 `recommend_games`). Friends with private libraries are skipped and counted. The first call of the day makes one
 request per friend at 1 per second; friends' names and libraries are cached for a day in `data/raw/friends.json`.
+
+Xbox: with an [OpenXBL](https://xbl.io) key in `.env` as `XBOX_API_KEY`, `refresh_xbox` reads your Xbox title
+history (console, Game Pass, Xbox PC app) and matches each game to a Steam appid through the store search. A match
+has to be the same name once trademark signs, punctuation and edition suffixes ("Complete Edition", "for Windows
+10") are stripped; failing that, the same name but for a re-release suffix (Steam lists The Witcher 3 as "Wild Hunt —
+Remastered"); failing that, one at least 90% similar with the same sequel numbers. A wrong match would put the wrong
+tags in the profile, so anything looser is a miss. Demos, betas, playtests, trials and apps are dropped. Hits and misses are cached for 30 days in
+`data/raw/xbox_matches.json`, so only new games are looked up (1 per second; the first call takes a few minutes).
+OpenXBL has no hours or last-played dates, so a matched game weighs `0.2 + 0.3 * achievement progress` (0.2-0.5) in
+the profile, with no recency and no abandonment; games your Steam library also has are skipped, since Steam has real
+hours. Every matched game is left out of recommendations, wildcards, backlog and `friends_games`. The titles are
+cached in `data/raw/xbox_titles.json` and refetched once a day when the profile loads (the cache is used if OpenXBL
+is down); until `refresh_xbox` first runs nothing reads OpenXBL and the profile is Steam's alone.
+`get_taste_profile` reports `xbox_games`, the number counted.
 
 Limits: `max_price_usd` keeps picks whose `price_usd` (what you'd pay now, after any discount) is at most that;
 picks with no known price are dropped. `max_hours` is a HowLongToBeat main-story limit. Candidates have no HLTB time
@@ -190,6 +205,9 @@ it before and after a change on the same day, because tag pools are cached for a
 ```sh
 scripts/evaluate.py --label "before R01"
 ```
+
+The evaluation uses the Steam library only: Xbox games (`refresh_xbox`) aren't in its profiles, so its numbers stay
+comparable with runs from before Xbox.
 
 It runs two held-out sets and prints a summary line and table for each. **favourites** is the set above: your
 all-time strongest games by plain taste weight. It's the fair test for ranking and retrieval changes, but it penalises

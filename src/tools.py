@@ -7,9 +7,10 @@ reads: keep them accurate. Library, df table and profile are loaded once and reu
 import difflib
 import time
 from collections.abc import Collection, Iterable, Mapping, Sequence
+from datetime import timedelta
 from typing import TypedDict, cast
 
-from src import friends, library, steam_api, steamspy, wishlist
+from src import friends, library, steam_api, steamspy, wishlist, xbox
 from src.constraints import candidate_hours, known_hours, with_hours, within_length, within_price
 from src.explain import explain
 from src.feedback import (
@@ -86,6 +87,7 @@ class State(TypedDict):
     session: str  # set by the Assistant: the session being logged
     new_session_requested: bool  # set by start_new_session, acted on by the Assistant once the turn ends
     draft: RequestDraft  # reset with every new session
+    xbox: xbox.XboxLibrary | None  # the Xbox games, read with the profile; None until refresh_xbox first fetches them
 
 
 state: State = {
@@ -97,6 +99,7 @@ state: State = {
     "session": "",
     "new_session_requested": False,
     "draft": empty_draft(),
+    "xbox": None,
 }
 reference_cache: dict[str, ReferenceGame | None] = {}  # lowercased name -> best match
 
@@ -108,13 +111,18 @@ def ensure_loaded() -> tuple[list[OwnedGame], dict[int, LibraryGame], DfTable, T
     if state["df_table"] is None:
         state["df_table"] = load_df_table()
     if state["profile"] is None:
+        # only once titles were fetched (refresh_xbox): reading the cache may refetch it daily, but never sets it up
+        if state["xbox"] is None and xbox.is_set_up():
+            state["xbox"] = xbox.load_xbox({game["appid"] for game in state["player_games"]})
         state["weights"] = library_weights(
             state["games"].values(),
             last_played_by_appid(state["player_games"]),
             recent_appids=played_recently(state["player_games"]),
             achievement_share=library.load_achievement_shares(state["player_games"]),
         )
-        state["profile"] = weighted_profile(state["games"].values(), state["weights"], state["df_table"])
+        state["profile"] = weighted_profile(
+            state["games"].values(), state["weights"], state["df_table"], xbox_entries(state["xbox"])
+        )
         if not state["profile"]:
             raise RuntimeError("Empty taste profile: no owned game has both playtime and tags")
     return state["player_games"], state["games"], state["df_table"], state["profile"]
@@ -163,9 +171,26 @@ def library_weights(
     return {g["appid"]: weight(g) for g in games if g["tags"]}
 
 
-def weighted_profile(games: Iterable[LibraryGame], weights: Mapping[int, float], df_table: DfTable) -> TagVector:
-    """sum(weight * tag_vector) over the games `weights` has a weight for."""
-    return build_profile([(weights[g["appid"]], g["tags"] or {}) for g in games if g["appid"] in weights], df_table)
+def weighted_profile(
+    games: Iterable[LibraryGame],
+    weights: Mapping[int, float],
+    df_table: DfTable,
+    extra: Sequence[tuple[float, dict[str, int]]] = (),
+) -> TagVector:
+    """sum(weight * tag_vector) over the games `weights` has a weight for, plus the `extra` (weight, tags) entries
+    (games owned outside Steam, e.g. on Xbox)."""
+    owned = [(weights[g["appid"]], g["tags"] or {}) for g in games if g["appid"] in weights]
+    return build_profile([*owned, *extra], df_table)
+
+
+def xbox_entries(library: xbox.XboxLibrary | None) -> list[tuple[float, dict[str, int]]]:
+    """The Xbox-only games as extra profile entries; none when Xbox isn't set up, so the profile is Steam's alone."""
+    return [(game["weight"], game["tags"]) for game in library["games"]] if library else []
+
+
+def xbox_appids() -> set[int]:
+    """Every game matched on the player's Xbox: owned there, so never recommended."""
+    return set(state["xbox"]["appids"]) if state["xbox"] else set()
 
 
 def library_profile(
@@ -294,6 +319,7 @@ def get_taste_profile(top_n: int = 15) -> dict[str, object]:
         ],
         "backlog_games": len(backlog_games(games, player_games)),
         "library_size": len(games),
+        "xbox_games": len(state["xbox"]["games"]) if state["xbox"] else 0,  # Xbox-only games counted in the profile
         "saved_preferences": load_preferences(),
     }
 
@@ -392,6 +418,7 @@ def recommend_games(
     tags it shares with the profile, which is the reason it was picked, plus its price: SteamSpy's US price in dollars
     (after any discount) and discount_percent, up to a day old. on_wishlist says the player already wishlisted it.
     New tag pools and game tags are fetched at ~1 request/second, so a first run with new tags can take a minute or two.
+    Games the player has on Xbox (once refresh_xbox has run) are never recommended, as picks, wildcards or backlog.
 
     Afterwards: show the picks as Markdown tables (recommendations, wildcards, backlog). If the player asks why a pick
     was chosen, call explain_pick for that game and answer from it. If they react to a game ("not for me", "loved
@@ -428,10 +455,12 @@ def recommend_games(
     max_hours = max_hours if max_hours is not None else draft["max_hours"]
     max_price_usd = max_price_usd if max_price_usd is not None else draft["max_price_usd"]
 
+    on_xbox = xbox_appids()  # a Steam backlog game the player also has on Xbox may be played there: not backlog
     excluded = (
         {game["appid"] for game in player_games}
         | {game["appid"] for game in [*references, *liked]}
         | never_recommend(feedback)
+        | on_xbox
     )
     ranked = recommend(taste, top_tags(taste, 8), excluded, df_table, avoid, required_tags=required)
     recommendations = ranked["recommendations"]
@@ -485,7 +514,9 @@ def recommend_games(
         backlog = [
             (g["appid"], g["name"], g["tags"] or {})
             for g in backlog_games(games, player_games)
-            if g["tags"] and fits_tags(g["tags"], enforced, avoid, ranked["requirement_relaxed"])
+            if g["tags"]
+            and g["appid"] not in on_xbox
+            and fits_tags(g["tags"], enforced, avoid, ranked["requirement_relaxed"])
         ]
         backlog_picks, owned_hours = within_length(
             score_backlog(backlog, taste, df_table),
@@ -960,7 +991,7 @@ def friends_games(
     boost, unknown_boost = canonical_tags(boost_tags, df_table)
     avoid, unknown_avoid = canonical_tags(avoid_tags, df_table)
     taste = adjust_profile(profile, [], boost, avoid) if boost or avoid else profile
-    excluded = {game["appid"] for game in player_games} | never_recommend(load_feedback())
+    excluded = {game["appid"] for game in player_games} | never_recommend(load_feedback()) | xbox_appids()
     owned_by = {
         appid: names
         for appid, names in friends.owners(cache).items()
@@ -1001,6 +1032,43 @@ def friends_games(
     return result
 
 
+XBOX_UNMATCHED_SHOWN = 20
+
+
+def refresh_xbox() -> dict[str, object]:
+    """Read the player's Xbox games (console, Game Pass, Xbox PC app) from OpenXBL now, match new ones to Steam games
+    and rebuild the taste profile with them. Matched games count in the profile by achievement progress (Xbox gives
+    no hours) unless the Steam library has them, and are never recommended.
+
+    Call when the player says they play on Xbox or Game Pass, or after they bought something on Xbox. The first call
+    is slow (a few minutes: one Steam store lookup per Xbox game at 1 per second); later calls only look up new games.
+    Needs an OpenXBL key (XBOX_API_KEY in .env).
+    """
+    player_games = state["player_games"] or library.load_library()[0]
+    loaded = xbox.load_xbox({game["appid"] for game in player_games}, max_age=timedelta(0))
+    if loaded is None:
+        return {
+            "error": "Couldn't read the Xbox games: no XBOX_API_KEY in .env, or the OpenXBL request failed and "
+            "nothing is cached yet. Try again later."
+        }
+    state["xbox"] = loaded
+    state["profile"] = None
+    _, _, _, profile = ensure_loaded()
+    result: dict[str, object] = {
+        "titles": loaded["titles"],
+        "matched": loaded["matched"],
+        "tagged": len(loaded["games"]),
+        "new_matches": loaded["new_matches"],
+        "unmatched": loaded["unmatched"][:XBOX_UNMATCHED_SHOWN],
+        "unmatched_count": len(loaded["unmatched"]),
+        "skipped_steam_duplicates": loaded["steam_duplicates"],
+        "top_tags": rounded(profile, top_tags(profile, 10)),
+    }
+    if loaded["fetch_failed"]:
+        result["openxbl_failed"] = f"OpenXBL didn't answer: used the Xbox games cached at {loaded['fetched_at']}"
+    return result
+
+
 TOOLS = [
     get_taste_profile,
     recommend_games,
@@ -1018,4 +1086,5 @@ TOOLS = [
     get_feedback,
     rank_wishlist,
     friends_games,
+    refresh_xbox,
 ]

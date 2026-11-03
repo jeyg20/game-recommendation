@@ -12,6 +12,7 @@ load_dotenv(ROOT / ".env")
 STEAM_API_KEY = os.getenv("STEAM_API_KEY") or ""
 STEAM_ID = os.getenv("STEAM_ID") or ""
 GEMINI_API: str | None = os.getenv("GEMINI_API")
+XBOX_API_KEY = os.getenv("XBOX_API_KEY") or ""  # OpenXBL (xbl.io); empty = Xbox not set up
 
 # Owned library pipeline (main.py), one cache per step
 STEAM_DATA_FILE_PATH = ROOT / "data/raw/steam_api_data.json"
@@ -20,6 +21,8 @@ HLTB_DATA_FILE_PATH = ROOT / "data/raw/hltb_game_data_list.json"
 ACHIEVEMENTS_PATH = ROOT / "data/raw/achievements.json"  # appid -> [achieved, total] | null (library.py)
 WISHLIST_PATH = ROOT / "data/raw/wishlist.json"  # the player's wishlist, refetched daily (wishlist.py)
 FRIENDS_PATH = ROOT / "data/raw/friends.json"  # friends' names and owned appids, refetched daily (friends.py)
+XBOX_TITLES_PATH = ROOT / "data/raw/xbox_titles.json"  # the player's Xbox title history, refetched daily (xbox.py)
+XBOX_MATCHES_PATH = ROOT / "data/raw/xbox_matches.json"  # Xbox titleId -> Steam appid or null, 30 days (xbox.py)
 
 # Steam-wide tag corpus (tag_profile.py)
 STEAM_BACKGROUND_CORPUS = ROOT / "data/corpus/steam_background_corpus.json"

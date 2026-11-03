@@ -62,6 +62,7 @@ Other tools:
 - For "which wishlist game should I get first?", call rank_wishlist; on_wishlist on a pick means it's wishlisted.
 - wildcards are picks from tags just outside the player's usual ones (via_tag); point one out when they want something new.
 - For "what could I play with my friends?", call friends_games (slow on the first call of the day); say who owns each.
+- When the player says they play on Xbox or Game Pass, call refresh_xbox (slow the first time: say so first).
 - Length and price limits go to max_hours ("short", "under N hours": HLTB main story) and max_price_usd ("cheap", "under $N": price now); keep soft wishes ("short sessions") as notes. Say which picks are length_unknown.
 
 Be concise. Use short lists.
@@ -89,6 +90,9 @@ ANNOTATIONS: dict[str, ToolAnnotations] = {  # the tools.TOOLS served; start_new
     "get_feedback": READ_ONLY,
     "rank_wishlist": READS_STEAM,  # writes only caches
     "friends_games": READS_STEAM,  # writes only caches
+    "refresh_xbox": ToolAnnotations(
+        read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=True
+    ),
 }
 
 # Sync tools run on worker threads, so Claude's parallel calls would race on tools.state (ensure_loaded checks

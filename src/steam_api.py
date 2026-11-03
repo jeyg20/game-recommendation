@@ -109,9 +109,14 @@ def get_game_details(game_id: str) -> dict[str, StoreApp] | None:
 
 def search_store(term: str) -> list[StoreSearchItem]:
     """Store search by name, best match first. Empty on no match or a failed request."""
+    return try_search_store(term) or []
+
+
+def try_search_store(term: str) -> list[StoreSearchItem] | None:
+    """search_store, but None on a failed request: a caller that caches misses (xbox) must not cache a hiccup."""
     data = steam_request(STORE_SEARCH, {"term": term, "cc": "us", "l": "en"})
     if data is None:
-        return []
+        return None
     return cast(list[StoreSearchItem], data.get("items", []))
 
 
