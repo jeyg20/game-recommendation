@@ -184,3 +184,22 @@ def test_achievement_share_strengthens_a_game_without_a_main_story(df_table: DfT
     assert tools.library_profile([game], df_table, now=NOW, achievement_share={}) == plain
     finished = tools.library_profile([game], df_table, now=NOW, achievement_share={1: 1.0})
     assert finished["RPG"] > plain["RPG"]
+
+
+def test_list_owned_games_filters_sorts_and_adds_details(monkeypatch: pytest.MonkeyPatch) -> None:
+    owned = [
+        {"appid": 1, "name": "Hades", "rtime_last_played": days_ago(2)},
+        {"appid": 2, "name": "Celeste", "rtime_last_played": 0},
+    ]
+    games = {1: tagged(1, 40.0, {"Roguelike": 5, "RPG": 2}), 2: tagged(2, 3.0, {"Platformer": 1})}
+    games[1]["name"], games[2]["name"] = "Hades", "Celeste"
+    monkeypatch.setattr(tools, "ensure_loaded", lambda: (owned, games, {}, {}))
+    monkeypatch.setitem(tools.state, "xbox", None)
+    plain = tools.list_owned_games()
+    assert [g["name"] for g in plain["games"]] == ["Hades", "Celeste"]  # type: ignore[index]
+    assert "appid" not in plain["games"][0]  # type: ignore[index]
+    assert "xbox" in plain  # tells the model Xbox games aren't loaded
+    one = tools.list_owned_games(query="cel", details=True)
+    assert one["total"] == 1
+    assert one["games"][0]["top_tags"] == ["Platformer"]  # type: ignore[index]
+    assert [g["name"] for g in tools.list_owned_games(sort="name", limit=1)["games"]] == ["Celeste"]  # type: ignore[union-attr]

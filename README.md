@@ -68,6 +68,7 @@ Gemini (`src/ai_agent.py`) reads your prompt and calls the tools in `src/tools.p
 | `rank_wishlist` | Your Steam wishlist ranked by fit to your profile (`data/raw/wishlist.json`, refetched daily) |
 | `friends_games` | Games your Steam friends own and you don't, ranked by fit, with who owns each (`data/raw/friends.json`, refetched daily) |
 | `refresh_xbox` | Reads your Xbox / Game Pass games and their hours from OpenXBL, matches them to Steam games, counts them in the profile by hours, stops recommending them and lists your most played (`data/raw/xbox_titles.json`, `data/raw/xbox_matches.json`, `data/raw/xbox_minutes.json`) |
+| `list_owned_games` | Your full owned library (Steam, plus Xbox games once `refresh_xbox` has run) with hours; `query` filters by name, `details` adds tags, genres, HLTB time, review score and last played |
 
 Steering: the library profile is scaled to unit length and the reference games' tag vectors are added on top
 (sharing a weight of 1.0 between them). Boost tags are must-haves: their SteamSpy pools are always fetched, every

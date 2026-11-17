@@ -32,6 +32,7 @@ TOOL_LABELS = {  # what the status line says while a tool runs
     "rank_wishlist": "ranking your wishlist",
     "friends_games": "ranking your friends' games",
     "refresh_xbox": "reading your Xbox games",
+    "list_owned_games": "listing your owned games",
 }
 MAX_TOOL_ROUNDS = 8  # model -> tools -> model round trips per prompt, guards against a call loop
 
@@ -77,6 +78,7 @@ Other tools:
 - wildcards are picks from tags just outside the player's usual ones (via_tag); point one out when they want something new.
 - For "what could I play with my friends?", call friends_games (slow on the first call of the day); say who owns each.
 - When the player says they play on Xbox or Game Pass, call refresh_xbox (slow the first time: say so first).
+- For "what games do I own?" or a question about specific owned games, call list_owned_games (query for names, details for tags and times).
 - Length and price limits go to max_hours ("short", "under N hours": HLTB main story) and max_price_usd ("cheap", "under $N": price now); keep soft wishes ("short sessions") as notes. Say which picks are length_unknown.
 
 Be concise. Use short lists.

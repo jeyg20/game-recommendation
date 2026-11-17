@@ -1091,6 +1091,78 @@ def refresh_xbox() -> dict[str, object]:
     return result
 
 
+OWNED_TAGS_SHOWN = 8
+
+
+def list_owned_games(
+    query: str | None = None,
+    details: bool = False,
+    platform: str = "all",
+    sort: str = "playtime",
+    limit: int | None = None,
+) -> dict[str, object]:
+    """The player's full owned library, Steam plus the Xbox games refresh_xbox matched (cached data only, no requests).
+
+    Use it for "what games do I own?", "list my library", "do I own X?" or "how long did I play X?". Plain taste
+    questions belong to get_taste_profile; picks to recommend_games.
+
+    Args:
+      query: Only games whose name contains this text (case-insensitive). Use it to ask about specific games.
+      details: Add appid, genres, top tags, HLTB main-story hours, review score, last played (Steam) and Xbox
+        achievement progress. Leave off for a plain list; turn on when asked about particular games.
+      platform: "all", "steam" or "xbox".
+      sort: "playtime" (most played first) or "name".
+      limit: Return only the first N games after sorting; the total is always reported.
+    """
+    player_games, games, _, _ = ensure_loaded()
+    last_played = last_played_by_appid(player_games)
+    rows: list[dict[str, object]] = []
+
+    if platform in ("all", "steam"):
+        for game in games.values():
+            row: dict[str, object] = {
+                "name": game["name"],
+                "platform": "steam",
+                "hours": round(game["playtime_hours"], 1),
+            }
+            if details:
+                tags = game["tags"] or {}
+                row |= {
+                    "appid": game["appid"],
+                    "genres": game["genres"],
+                    "top_tags": sorted(tags, key=tags.__getitem__, reverse=True)[:OWNED_TAGS_SHOWN],
+                    "main_story_hours": game["main_story_hours"],
+                    "review_score": game["review_score"],
+                    "last_played": time.strftime("%Y-%m-%d", time.gmtime(last_played.get(game["appid"], 0)))
+                    if last_played.get(game["appid"])
+                    else None,
+                }
+            rows.append(row)
+
+    if platform in ("all", "xbox") and state["xbox"]:
+        for xgame in state["xbox"]["games"]:
+            row = {"name": xgame["name"], "platform": "xbox", "hours": round(xgame["hours"], 1)}
+            if details:
+                xtags = xgame["tags"]
+                row |= {
+                    "appid": xgame["appid"],
+                    "top_tags": sorted(xtags, key=xtags.__getitem__, reverse=True)[:OWNED_TAGS_SHOWN],
+                    "achievement_progress": xgame["progress"],
+                }
+            rows.append(row)
+
+    if query:
+        rows = [row for row in rows if query.lower() in str(row["name"]).lower()]
+    if sort == "name":
+        rows.sort(key=lambda row: str(row["name"]).lower())
+    else:
+        rows.sort(key=lambda row: cast(float, row["hours"]), reverse=True)
+    result: dict[str, object] = {"total": len(rows), "games": rows[:limit] if limit else rows}
+    if platform in ("all", "xbox") and state["xbox"] is None:
+        result["xbox"] = "not loaded: call refresh_xbox to include Xbox games"
+    return result
+
+
 TOOLS = [
     get_taste_profile,
     recommend_games,
@@ -1109,4 +1181,5 @@ TOOLS = [
     rank_wishlist,
     friends_games,
     refresh_xbox,
+    list_owned_games,
 ]
